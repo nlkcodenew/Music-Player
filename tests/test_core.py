@@ -15,12 +15,7 @@ from musicplayer.library import natural_key, scan_library
 from musicplayer.paths import RuntimePaths, detect_os
 from musicplayer.reporter import _redact, queue_report
 from musicplayer.settings import Settings
-from musicplayer.updater import (
-    sync_menu_entries,
-    update_available,
-    validate_manifest,
-    version_tuple,
-)
+from musicplayer.updater import apply_update, update_available, validate_manifest, version_tuple
 
 
 class LibraryTests(unittest.TestCase):
@@ -60,15 +55,6 @@ class PathTests(unittest.TestCase):
             paths = RuntimePaths.discover(app_dir=app_dir, environ={})
         self.assertEqual(paths.sdcard_path, root)
 
-    def test_shared_payload_is_rooted_at_sd_card(self):
-        with tempfile.TemporaryDirectory() as root:
-            app_dir = os.path.join(root, ".music-player")
-            os.makedirs(app_dir)
-            os.makedirs(os.path.join(root, "Music"))
-            paths = RuntimePaths.discover(app_dir=app_dir, environ={})
-        self.assertEqual(paths.sdcard_path, root)
-        self.assertEqual(paths.app_dir, app_dir)
-
     def test_detects_spruce_from_environment(self):
         self.assertEqual(detect_os("/missing", {"MUSIC_PLAYER_OS": "spruce"}), "spruce")
 
@@ -95,7 +81,7 @@ class SettingsTests(unittest.TestCase):
 class ReporterTests(unittest.TestCase):
     def test_redacts_token_paths_and_mac(self):
         paths = mock.Mock(
-            app_dir="/sd/.music-player", sdcard_path="/sd", music_dir="/sd/Music"
+            app_dir="/sd/Apps/Music Player", sdcard_path="/sd", music_dir="/sd/Music"
         )
         text = "Authorization: Bearer secret /sd/Music/private-song.mp3\naa:bb:cc:dd:ee:ff github_pat_ABC"
         redacted = _redact(text, paths, ("secret",))
@@ -132,19 +118,31 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(version_tuple("v1.10.2"), (1, 10, 2))
         self.assertTrue(update_available({"version": "99.0.0"}))
 
-    def test_menu_entries_sync_to_stock_and_spruce_names(self):
+    def test_update_stays_inside_installed_app_directory(self):
         with tempfile.TemporaryDirectory() as root:
-            app_dir = os.path.join(root, ".music-player")
-            entry_dir = os.path.join(app_dir, "entry")
-            os.makedirs(entry_dir)
-            for name in ("config.json", "launch.sh", "icon.png"):
-                with open(os.path.join(entry_dir, name), "wb") as handle:
-                    handle.write(name.encode("ascii"))
-            paths = mock.Mock(app_dir=app_dir, sdcard_path=root)
-            sync_menu_entries(paths)
-            for menu_root in ("App", "Apps"):
-                for name in ("config.json", "launch.sh", "icon.png"):
-                    self.assertTrue(os.path.isfile(os.path.join(root, menu_root, "Music Player", name)))
+            app_dir = os.path.join(root, "Apps", "Music Player")
+            data_dir = os.path.join(app_dir, "data")
+            os.makedirs(data_dir)
+            paths = mock.Mock(app_dir=app_dir, data_dir=data_dir)
+            manifest = {
+                "version": "1.0.2",
+                "base_url": "https://example.test/files",
+                "files": [{"path": "config.json", "sha256": "0" * 64, "size": 3}],
+            }
+
+            def stage_file(unused_paths, unused_manifest, unused_item, staging):
+                destination = os.path.join(staging, "config.json")
+                with open(destination, "wb") as handle:
+                    handle.write(b"new")
+                return "config.json"
+
+            with mock.patch("musicplayer.updater._download_file", side_effect=stage_file):
+                apply_update(paths, manifest)
+
+            with open(os.path.join(app_dir, "config.json"), "rb") as handle:
+                self.assertEqual(handle.read(), b"new")
+            self.assertTrue(os.path.isfile(os.path.join(app_dir, ".restart")))
+            self.assertFalse(os.path.exists(os.path.join(root, "App", "Music Player")))
 
 
 class FakeRuntime:
@@ -170,4 +168,3 @@ class AudioLogicTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

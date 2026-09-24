@@ -14,7 +14,7 @@ from .reporter import queue_report
 from .ssl_context import verified_context
 
 
-MANIFEST_ASSET = "portable-manifest.json"
+MANIFEST_ASSET = "ota-manifest.json"
 PROTECTED = {
     "secrets.json", "settings.json", "pending-reports.json", "identity.json",
     "music-player.log", "music-player-stdio.log", "music-player-diagnostics.json",
@@ -132,26 +132,6 @@ def _download_file(paths, manifest, item, staging):
     return relative
 
 
-def sync_menu_entries(paths):
-    entry_source = os.path.join(paths.app_dir, "entry")
-    if not os.path.isdir(entry_source):
-        return
-    for menu_root in ("App", "Apps"):
-        destination = os.path.join(paths.sdcard_path, menu_root, "Music Player")
-        os.makedirs(destination, exist_ok=True)
-        for filename in ("config.json", "launch.sh", "icon.png"):
-            source = os.path.join(entry_source, filename)
-            if not os.path.isfile(source):
-                continue
-            target = os.path.join(destination, filename)
-            temporary = target + ".new"
-            shutil.copyfile(source, temporary)
-            if filename.endswith(".sh"):
-                os.chmod(temporary, 0o755)
-            os.replace(temporary, target)
-        _fsync_directory(destination)
-
-
 def apply_update(paths, manifest):
     validate_manifest(manifest)
     staging = tempfile.mkdtemp(prefix="music-update-", dir=paths.data_dir)
@@ -168,11 +148,10 @@ def apply_update(paths, manifest):
             shutil.copyfile(source, temporary)
             if relative.endswith(".sh"):
                 os.chmod(temporary, 0o755)
-            with open(temporary, "rb") as handle:
+            with open(temporary, "r+b") as handle:
                 os.fsync(handle.fileno())
             os.replace(temporary, destination)
             _fsync_directory(os.path.dirname(destination))
-        sync_menu_entries(paths)
         with open(os.path.join(paths.app_dir, ".restart"), "w", encoding="ascii") as handle:
             handle.write(str(manifest["version"]))
             handle.flush()

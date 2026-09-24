@@ -10,8 +10,6 @@ def _first_existing(candidates):
 
 
 def _sdcard_from_app(app_dir):
-    if os.path.basename(os.path.abspath(app_dir)) == ".music-player":
-        return os.path.dirname(os.path.abspath(app_dir))
     current = os.path.abspath(app_dir)
     while True:
         parent = os.path.dirname(current)
@@ -86,4 +84,3 @@ class RuntimePaths:
     def ensure_writable_dirs(self):
         os.makedirs(self.music_dir, exist_ok=True)
         os.makedirs(self.data_dir, exist_ok=True)
-

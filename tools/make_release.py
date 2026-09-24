@@ -8,15 +8,15 @@ import shutil
 import sys
 import zipfile
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES_DIR = os.path.join(REPO_ROOT, "files")
-ENTRY_DIR = os.path.join(REPO_ROOT, "entry")
 ASSETS_DIR = os.path.join(REPO_ROOT, "assets")
 DIST_DIR = os.path.join(REPO_ROOT, "dist")
 MANIFEST_PATH = os.path.join(REPO_ROOT, "manifest.json")
-PAYLOAD_ROOT = ".music-player"
-ENTRY_ROOTS = ("App/Music Player", "Apps/Music Player")
+PACKAGES = {
+    "stock": "Apps/Music Player",
+    "spruce": "App/Music Player",
+}
 TEXT_EXTENSIONS = {".json", ".md", ".pem", ".py", ".sh", ".txt"}
 EXCLUDED = {
     "secrets.json", "settings.json", "pending-reports.json", "identity.json",
@@ -65,11 +65,11 @@ def payload_files():
             source = os.path.join(current, filename)
             relative = os.path.relpath(source, FILES_DIR).replace(os.sep, "/")
             files.append((relative, source))
-    files.append(("certs/cacert.pem", os.path.join(ASSETS_DIR, "cacert.pem")))
     files.extend((
-        ("entry/config.json", os.path.join(ENTRY_DIR, "config.json")),
-        ("entry/launch.sh", os.path.join(ENTRY_DIR, "launch.sh")),
-        ("entry/icon.png", os.path.join(ASSETS_DIR, "icon.png")),
+        ("certs/cacert.pem", os.path.join(ASSETS_DIR, "cacert.pem")),
+        ("config.json", os.path.join(ASSETS_DIR, "config.json")),
+        ("icon.png", os.path.join(ASSETS_DIR, "icon.png")),
+        ("LICENSE.txt", os.path.join(REPO_ROOT, "LICENSE")),
     ))
     return files
 
@@ -86,12 +86,10 @@ def manifest(version, repo, files):
         }
         if relative == "certs/cacert.pem":
             entry["url"] = "https://raw.githubusercontent.com/%s/%s/assets/cacert.pem" % (repo, release_ref)
-        elif relative.startswith("entry/"):
-            source_path = relative[len("entry/"):]
-            if source_path == "icon.png":
-                entry["url"] = "https://raw.githubusercontent.com/%s/%s/assets/icon.png" % (repo, release_ref)
-            else:
-                entry["url"] = "https://raw.githubusercontent.com/%s/%s/entry/%s" % (repo, release_ref, source_path)
+        elif relative in ("config.json", "icon.png"):
+            entry["url"] = "https://raw.githubusercontent.com/%s/%s/assets/%s" % (repo, release_ref, relative)
+        elif relative == "LICENSE.txt":
+            entry["url"] = "https://raw.githubusercontent.com/%s/%s/LICENSE" % (repo, release_ref)
         entries.append(entry)
     return {
         "version": version,
@@ -100,6 +98,19 @@ def manifest(version, repo, files):
         "base_url": "https://raw.githubusercontent.com/%s/%s/files" % (repo, release_ref),
         "files": entries,
     }
+
+
+def write_package(version, platform, package_root, files):
+    archive_name = "trimui-music-player-v%s-%s.zip" % (version, platform)
+    archive_path = os.path.join(DIST_DIR, archive_name)
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for relative, source in files:
+            target = "%s/%s" % (package_root, relative)
+            add_file(archive, source, target, relative.endswith(".sh"))
+    digest = hashlib.sha256(release_bytes(archive_path)).hexdigest()
+    with open(archive_path + ".sha256", "w", encoding="ascii", newline="\n") as handle:
+        handle.write("%s  %s\n" % (digest, archive_name))
+    print("created %s" % archive_path)
 
 
 def main():
@@ -113,24 +124,9 @@ def main():
 
     shutil.rmtree(DIST_DIR, ignore_errors=True)
     os.makedirs(DIST_DIR, exist_ok=True)
-    shutil.copyfile(MANIFEST_PATH, os.path.join(DIST_DIR, "portable-manifest.json"))
-    archive_name = "trimui-music-player-v%s.zip" % version
-    archive_path = os.path.join(DIST_DIR, archive_name)
-    with zipfile.ZipFile(archive_path, "w") as archive:
-        add_file(archive, os.path.join(REPO_ROOT, "README.md"), "README.md")
-        add_file(archive, os.path.join(REPO_ROOT, "LICENSE"), "LICENSE.txt")
-        for relative, source in files:
-            add_file(archive, source, "%s/%s" % (PAYLOAD_ROOT, relative), relative.endswith(".sh"))
-        add_file(archive, MANIFEST_PATH, "%s/portable-manifest.json" % PAYLOAD_ROOT)
-        for entry_root in ENTRY_ROOTS:
-            add_file(archive, os.path.join(ENTRY_DIR, "config.json"), "%s/config.json" % entry_root)
-            add_file(archive, os.path.join(ENTRY_DIR, "launch.sh"), "%s/launch.sh" % entry_root, True)
-            add_file(archive, os.path.join(ASSETS_DIR, "icon.png"), "%s/icon.png" % entry_root)
-
-    digest = hashlib.sha256(release_bytes(archive_path)).hexdigest()
-    with open(archive_path + ".sha256", "w", encoding="ascii", newline="\n") as handle:
-        handle.write("%s  %s\n" % (digest, archive_name))
-    print("created %s" % archive_path)
+    shutil.copyfile(MANIFEST_PATH, os.path.join(DIST_DIR, "ota-manifest.json"))
+    for platform, package_root in PACKAGES.items():
+        write_package(version, platform, package_root, files)
     return 0
 
 

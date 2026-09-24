@@ -1,56 +1,59 @@
-# Portable Music Player
+# Music Player for TrimUI Brick Pro
 
-This repository is the Stock OS / Spruce OS rewrite of NextUI Music Player. It
-does not link `libmsettings`, compile NextUI platform sources, or require NextUI
-environment variables.
+Music Player is a self-contained music player for TrimUI Brick Pro Stock OS and
+Spruce OS. It does not require NextUI libraries or place a hidden application
+directory at the SD-card root.
 
-## Version 1.0.0
+## Version 1.0.1
 
 - Detect Stock OS and Spruce OS at runtime.
 - Scan the SD card recursively for WAV, MP3, OGG, FLAC and OPUS files.
-- Play through firmware SDL2_mixer with controller navigation. Codec support is
-  reported at startup and depends on the OS mixer; unsupported files show a
-  visible error instead of crashing the app.
+- Play through the firmware SDL2_mixer with controller navigation.
 - Persist volume, shuffle, repeat and the last selected track.
 - Rotate local logs and preserve pending error reports.
-- Create deduplicated GitHub Issues when a user provides an Issues-only token.
-- Check immutable OTA manifests over verified TLS, verify SHA-256, stage, apply
-  atomically and restart through the launcher.
-- Generate one ZIP rooted at `App/Music Player/` for both supported OSes.
+- Create deduplicated GitHub Issues when an Issues-only token is configured.
+- Update in place over verified TLS with SHA-256 validation and atomic writes.
+- Keep the complete application in one visible menu directory.
 
-AAC/M4A, playlists, album art, lyrics, radio, podcasts and downloads will be
-ported from the original implementation as independent later modules.
+AAC/M4A, playlists, album art, lyrics, radio, podcasts and downloads are not yet
+included.
 
 ## Install
 
-Build the package, then extract it at the SD-card root:
+Download exactly one package from the GitHub release:
 
-```powershell
-python tools/make_release.py
-python tools/verify_release.py
-```
+- Stock OS: `trimui-music-player-v1.0.1-stock.zip`
+- Spruce OS: `trimui-music-player-v1.0.1-spruce.zip`
 
-Publish the ZIP, its `.sha256` sidecar, and `portable-manifest.json` from
-`dist/` on a tag named `vX.Y.Z` so OTA uses immutable URLs.
+Extract the selected ZIP directly to the SD-card root. Do not copy files between
+folders manually.
 
-The resulting layout deliberately contains one shared payload and two tiny menu
-entries because Stock OS uses `Apps/` while Spruce uses `App/`:
+Stock OS installs one self-contained directory:
 
 ```text
-/.music-player/             # real app; OTA updates only this directory
+/Apps/Music Player/
   app.py
+  launch.sh
+  config.json
+  icon.png
+  certs/
   musicplayer/
-App/Music Player/           # Spruce menu entry
-  config.json
-  launch.sh
-Apps/Music Player/          # Stock OS menu entry
-  config.json
-  launch.sh
 ```
 
-Both launchers execute the same `/.music-player/launch.sh`. Logs, settings,
-tokens and OTA state therefore cannot diverge when the SD card boots another
-OS.
+Spruce OS installs the same application in its native menu directory:
+
+```text
+/App/Music Player/
+  app.py
+  launch.sh
+  config.json
+  icon.png
+  certs/
+  musicplayer/
+```
+
+There is no `/.music-player` directory. Settings, logs, optional credentials and
+OTA updates remain inside the installed `Music Player` directory.
 
 Music is read from `$MUSIC_PLAYER_MUSIC_DIR` when set, otherwise the first
 existing path among `Music`, `Media/Music`, `Roms/MUSIC`, and `ROMS/MUSIC` at
@@ -69,17 +72,33 @@ the SD-card root.
 
 ## Diagnostics
 
-Run this on the device:
+Run the launcher with `--diagnose` from the installed application directory:
 
 ```sh
-cd "/mnt/SDCARD/App/Music Player"
+cd "/mnt/SDCARD/Apps/Music Player" # Stock OS
 ./launch.sh --diagnose
 ```
 
-It writes `music-player-diagnostics.json`. Normal logs are in
-`music-player.log`, with bounded rotated backups.
+Use `/mnt/SDCARD/App/Music Player` on Spruce OS. Diagnostics and bounded logs
+are written in the same application directory.
 
-To enable automatic GitHub Issue reports, copy `secrets.example.json` to
-`secrets.json` and provide a fine-grained token restricted to **Issues: read
-and write** for the target repository. Tokens and raw secrets are never logged,
-uploaded, included in OTA, or included in release archives.
+## GitHub Issues
+
+Copy `secrets.example.json` to `secrets.json` inside the installed `Music
+Player` directory. Add a fine-grained token restricted to **Issues: read and
+write** for `nlkcodenew/Music-Player`.
+
+`secrets.json`, settings, identity, pending reports, logs and diagnostics are
+never committed, packaged or replaced by OTA. Tokens are never written to logs.
+
+## Development
+
+Build and verify both packages:
+
+```powershell
+python tools/make_release.py
+python tools/verify_release.py
+```
+
+A `vX.Y.Z` tag publishes the two ZIP files, their SHA-256 sidecars and the
+shared `ota-manifest.json` release asset.

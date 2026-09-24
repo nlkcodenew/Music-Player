@@ -18,7 +18,6 @@ jobs:
           python3 -m compileall -q files tools tests
           python3 -m unittest discover -s tests -v
           sh -n files/launch.sh
-          sh -n entry/launch.sh
 
       - name: Build and verify package
         env:
