@@ -1,0 +1,13 @@
+dist/
+__pycache__/
+*.py[cod]
+
+files/data/
+files/Music/
+files/secrets.json
+files/settings.json
+files/identity.json
+files/pending-reports.json
+files/music-player.log*
+files/music-player-stdio.log*
+files/music-player-diagnostics.json
