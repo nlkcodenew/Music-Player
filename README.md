@@ -4,7 +4,7 @@ Music Player is a self-contained music player for TrimUI Brick Pro Stock OS and
 Spruce OS. It does not require NextUI libraries or place a hidden application
 directory at the SD-card root.
 
-## Version 1.0.1
+## Version 1.0.2
 
 - Detect Stock OS and Spruce OS at runtime.
 - Scan the SD card recursively for WAV, MP3, OGG, FLAC and OPUS files.
@@ -22,8 +22,8 @@ included.
 
 Download exactly one package from the GitHub release:
 
-- Stock OS: `trimui-music-player-v1.0.1-stock.zip`
-- Spruce OS: `trimui-music-player-v1.0.1-spruce.zip`
+- Stock OS: `trimui-music-player-v1.0.2-stock.zip`
+- Spruce OS: `trimui-music-player-v1.0.2-spruce.zip`
 
 Extract the selected ZIP directly to the SD-card root. Do not copy files between
 folders manually.
@@ -31,7 +31,7 @@ folders manually.
 Stock OS installs one self-contained directory:
 
 ```text
-/Apps/Music Player/
+/Apps/MusicPlayer/
   app.py
   launch.sh
   config.json
@@ -43,7 +43,7 @@ Stock OS installs one self-contained directory:
 Spruce OS installs the same application in its native menu directory:
 
 ```text
-/App/Music Player/
+/App/MusicPlayer/
   app.py
   launch.sh
   config.json
@@ -53,7 +53,9 @@ Spruce OS installs the same application in its native menu directory:
 ```
 
 There is no `/.music-player` directory. Settings, logs, optional credentials and
-OTA updates remain inside the installed `Music Player` directory.
+OTA updates remain inside the installed `MusicPlayer` directory. The visible
+menu label remains "Music Player"; the folder name intentionally has no spaces
+for compatibility with the Stock OS launcher.
 
 Music is read from `$MUSIC_PLAYER_MUSIC_DIR` when set, otherwise the first
 existing path among `Music`, `Media/Music`, `Roms/MUSIC`, and `ROMS/MUSIC` at
@@ -63,29 +65,37 @@ the SD-card root.
 
 - D-pad: select track; Left/Right seek while playing
 - A: play / pause
-- B: back / exit
+- B: back; from Library opens exit confirmation
 - L1 / R1: previous / next
 - L2 / R2: volume down / up
-- X: shuffle
-- Y: repeat off / all / one
+- X: add/remove the selected song or playlist from favorites
+- Y in Library: All Songs / Favorite Songs / Playlists / Favorite Playlists
+- Y in Now Playing: repeat off / all / one
 - Start: library / now playing
+- Select: send a diagnostic report, or install an available OTA update
+
+To exit, press **B** in Library, then **A** to confirm. Press **B** again to
+cancel. The footer displays the controls for the current screen.
+
+Each folder under `Music` is treated as a playlist. Favorite songs and favorite
+playlists are stored in `data/collections.json` and are preserved by OTA.
 
 ## Diagnostics
 
 Run the launcher with `--diagnose` from the installed application directory:
 
 ```sh
-cd "/mnt/SDCARD/Apps/Music Player" # Stock OS
+cd "/mnt/SDCARD/Apps/MusicPlayer" # Stock OS
 ./launch.sh --diagnose
 ```
 
-Use `/mnt/SDCARD/App/Music Player` on Spruce OS. Diagnostics and bounded logs
+Use `/mnt/SDCARD/App/MusicPlayer` on Spruce OS. Diagnostics and bounded logs
 are written in the same application directory.
 
 ## GitHub Issues
 
-Copy `secrets.example.json` to `secrets.json` inside the installed `Music
-Player` directory. Add a fine-grained token restricted to **Issues: read and
+Copy `secrets.example.json` to `secrets.json` inside the installed
+`MusicPlayer` directory. Add a fine-grained token restricted to **Issues: read and
 write** for `nlkcodenew/Music-Player`.
 
 `secrets.json`, settings, identity, pending reports, logs and diagnostics are

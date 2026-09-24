@@ -10,11 +10,11 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGES = {
-    "stock": "Apps/Music Player",
-    "spruce": "App/Music Player",
+    "stock": "Apps/MusicPlayer",
+    "spruce": "App/MusicPlayer",
 }
 EXCLUDED = {
-    "secrets.json", "settings.json", "pending-reports.json", "identity.json",
+    "secrets.json", "settings.json", "collections.json", "pending-reports.json", "identity.json",
     "music-player.log", "music-player-stdio.log", "music-player-diagnostics.json",
 }
 

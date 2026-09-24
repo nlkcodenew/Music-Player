@@ -14,12 +14,12 @@ ASSETS_DIR = os.path.join(REPO_ROOT, "assets")
 DIST_DIR = os.path.join(REPO_ROOT, "dist")
 MANIFEST_PATH = os.path.join(REPO_ROOT, "manifest.json")
 PACKAGES = {
-    "stock": "Apps/Music Player",
-    "spruce": "App/Music Player",
+    "stock": "Apps/MusicPlayer",
+    "spruce": "App/MusicPlayer",
 }
 TEXT_EXTENSIONS = {".json", ".md", ".pem", ".py", ".sh", ".txt"}
 EXCLUDED = {
-    "secrets.json", "settings.json", "pending-reports.json", "identity.json",
+    "secrets.json", "settings.json", "collections.json", "pending-reports.json", "identity.json",
     "music-player.log", "music-player-stdio.log", "music-player-diagnostics.json",
 }
 

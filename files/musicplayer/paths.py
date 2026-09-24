@@ -49,6 +49,7 @@ class RuntimePaths:
     log_file: str
     stdio_log_file: str
     pending_reports_file: str
+    collections_file: str
     os_name: str
 
     @classmethod
@@ -76,8 +77,11 @@ class RuntimePaths:
             data_dir=data_dir,
             settings_file=os.path.join(data_dir, "settings.json"),
             log_file=os.path.join(app_dir, "music-player.log"),
-            stdio_log_file=os.path.join(app_dir, "music-player-stdio.log"),
+            stdio_log_file=environ.get("MUSIC_PLAYER_STDIO_LOG") or os.path.join(
+                app_dir, "music-player-stdio.log"
+            ),
             pending_reports_file=os.path.join(data_dir, "pending-reports.json"),
+            collections_file=os.path.join(data_dir, "collections.json"),
             os_name=detect_os(sdcard_path, environ),
         )
 

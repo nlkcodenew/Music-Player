@@ -184,10 +184,10 @@ def main():
     paths = RuntimePaths.discover()
     paths.ensure_writable_dirs()
     init_logging(paths.log_file)
-    queue_report(paths, reason)
+    if "--retry-only" not in sys.argv:
+        queue_report(paths, reason)
     retry_pending(paths)
 
 
 if __name__ == "__main__":
     main()
-

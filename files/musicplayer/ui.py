@@ -2,9 +2,10 @@ import ctypes
 import threading
 
 from .audio import AudioPlayer
+from .collections import Collections
 from .input import InputState
 from .logger import get_logger
-from .reporter import queue_report
+from .reporter import queue_report, retry_pending
 from .settings import Settings
 from .sdl_runtime import (
     SDL_Color,
@@ -39,6 +40,7 @@ class MusicPlayerApp:
         self.paths = paths
         self.tracks = tracks
         self.settings = Settings(paths.settings_file).load()
+        self.collections = Collections(paths.collections_file).load()
         self.runtime = None
         self.window = None
         self.renderer = None
@@ -52,9 +54,14 @@ class MusicPlayerApp:
         self.input = InputState()
         self.player = None
         self.status = ""
+        self.status_error = False
         self.update_manifest = None
         self.update_busy = False
         self.update_lock = threading.Lock()
+        self.exit_confirmation = False
+        self.library_mode = "all"
+        self.playlist_parent_mode = "playlists"
+        self.active_playlist = ""
 
     def initialize(self):
         self.runtime = SDLRuntime(self.paths)
@@ -119,9 +126,9 @@ class MusicPlayerApp:
                 with self.update_lock:
                     self.update_manifest = manifest
                     self.status = "Update v%s available - press SELECT to install" % manifest["version"]
+                    self.status_error = False
         except Exception as error:
             get_logger().warning("OTA check failed: %s", error)
-            queue_report(self.paths, "ota_manifest_failed", str(error))
 
     def _install_update(self):
         with self.update_lock:
@@ -130,24 +137,54 @@ class MusicPlayerApp:
             self.update_busy = True
             manifest = self.update_manifest
             self.status = "Installing update v%s..." % manifest["version"]
+            self.status_error = False
 
         def worker():
             try:
                 apply_update(self.paths, manifest)
                 self.status = "Update installed. Restarting..."
+                self.status_error = False
                 self.running = False
             except Exception as error:
                 get_logger().error("OTA installation failed: %s", error)
                 self.status = "Update failed; see music-player.log"
+                self.status_error = True
             finally:
                 with self.update_lock:
                     self.update_busy = False
 
         threading.Thread(target=worker, name="ota-install", daemon=True).start()
 
+    def _send_diagnostic(self):
+        with self.update_lock:
+            if self.update_busy:
+                return
+            self.update_busy = True
+            self.status = "Sending diagnostic report..."
+            self.status_error = False
+
+        def worker():
+            try:
+                queue_report(self.paths, "manual_diagnostic", "Submitted with SELECT")
+                if retry_pending(self.paths):
+                    self.status = "Diagnostic report sent to GitHub Issues"
+                else:
+                    self.status = "Report saved; connect Wi-Fi and press SELECT again"
+                self.status_error = False
+            except Exception as error:
+                get_logger().warning("diagnostic upload failed: %s", error)
+                self.status = "Report saved; upload failed"
+                self.status_error = True
+            finally:
+                with self.update_lock:
+                    self.update_busy = False
+
+        threading.Thread(target=worker, name="diagnostic-upload", daemon=True).start()
+
     def cleanup(self):
         try:
             self.settings.save()
+            self.collections.save()
         except OSError as error:
             get_logger().error("cannot save settings: %s", error)
             queue_report(self.paths, "settings_save_failed", str(error))
@@ -171,6 +208,7 @@ class MusicPlayerApp:
             while self.running:
                 while self.runtime.SDL_PollEvent(ctypes.byref(event)):
                     if event.type == SDL_QUIT:
+                        get_logger().info("received SDL quit event")
                         self.running = False
                     else:
                         self.input.feed(event)
@@ -179,6 +217,7 @@ class MusicPlayerApp:
                 self.player.update()
                 if self.player.error:
                     self.status = self.player.error
+                    self.status_error = True
                 self._render()
                 self.runtime.SDL_Delay(16)
             return 0
@@ -186,10 +225,22 @@ class MusicPlayerApp:
             self.cleanup()
 
     def _handle(self, action):
+        get_logger().info("input action=%s screen=%s", action, self.screen)
         if self.update_busy:
             return
-        if action == "select" and self.update_manifest:
-            self._install_update()
+        if self.exit_confirmation:
+            if action == "a":
+                get_logger().info("exit confirmed by user")
+                self.running = False
+            elif action == "b":
+                get_logger().info("exit cancelled by user")
+                self.exit_confirmation = False
+            return
+        if action == "select":
+            if self.update_manifest:
+                self._install_update()
+            else:
+                self._send_diagnostic()
             return
         if action == "start":
             self.screen = "playing" if self.screen == "library" else "library"
@@ -197,8 +248,13 @@ class MusicPlayerApp:
         if action == "b":
             if self.screen == "playing":
                 self.screen = "library"
+            elif self.library_mode == "playlist_tracks":
+                self.library_mode = self.playlist_parent_mode
+                self.active_playlist = ""
+                self.selection = 0
+                self.scroll = 0
             else:
-                self.running = False
+                self.exit_confirmation = True
             return
         if action == "l1":
             self.player.advance(False)
@@ -215,31 +271,92 @@ class MusicPlayerApp:
             self.player.set_volume(int(self.settings.get("volume")) + 5)
             return
         if action == "x":
-            self.settings.set("shuffle", not self.settings.get("shuffle"))
+            self._toggle_favorite()
             return
         if action == "y":
-            values = ("off", "all", "one")
-            current = values.index(self.settings.get("repeat"))
-            self.settings.set("repeat", values[(current + 1) % len(values)])
+            if self.screen == "library":
+                self._cycle_library_mode()
+            else:
+                values = ("off", "all", "one")
+                current = values.index(self.settings.get("repeat"))
+                self.settings.set("repeat", values[(current + 1) % len(values)])
             return
         if self.screen == "library":
-            if action == "up" and self.tracks:
+            entries = self._library_entries()
+            if action == "up" and entries:
                 self.selection = max(0, self.selection - 1)
-            elif action == "down" and self.tracks:
-                self.selection = min(len(self.tracks) - 1, self.selection + 1)
-            elif action == "left" and self.tracks:
+            elif action == "down" and entries:
+                self.selection = min(len(entries) - 1, self.selection + 1)
+            elif action == "left" and entries:
                 self.selection = max(0, self.selection - self.visible_rows())
-            elif action == "right" and self.tracks:
-                self.selection = min(len(self.tracks) - 1, self.selection + self.visible_rows())
-            elif action == "a" and self.tracks and self.player.play(self.selection):
-                self.screen = "playing"
+            elif action == "right" and entries:
+                self.selection = min(len(entries) - 1, self.selection + self.visible_rows())
+            elif action == "a" and entries:
+                if self.library_mode in ("playlists", "favorite_playlists"):
+                    self.active_playlist = entries[self.selection]
+                    self.playlist_parent_mode = self.library_mode
+                    self.library_mode = "playlist_tracks"
+                    self.selection = 0
+                    self.scroll = 0
+                else:
+                    track = entries[self.selection]
+                    self.player.tracks = list(entries)
+                    if self.player.play(self.selection):
+                        self.screen = "playing"
         else:
             if action == "a":
-                self.player.toggle_pause()
+                paused = self.player.toggle_pause()
+                self.status = "Paused" if paused else "Playing"
+                self.status_error = False
             elif action == "left":
                 self.player.seek(-10)
             elif action == "right":
                 self.player.seek(10)
+
+    def _library_entries(self):
+        if self.library_mode == "favorites":
+            return [track for track in self.tracks if self.collections.is_track_favorite(track.path)]
+        if self.library_mode == "playlists":
+            return self.collections.playlists(self.tracks)
+        if self.library_mode == "favorite_playlists":
+            return self.collections.playlists(self.tracks, favorites_only=True)
+        if self.library_mode == "playlist_tracks":
+            return [track for track in self.tracks if track.folder == self.active_playlist]
+        return self.tracks
+
+    def _cycle_library_mode(self):
+        modes = ("all", "favorites", "playlists", "favorite_playlists")
+        current = self.playlist_parent_mode if self.library_mode == "playlist_tracks" else self.library_mode
+        self.library_mode = modes[(modes.index(current) + 1) % len(modes)]
+        self.active_playlist = ""
+        self.selection = 0
+        self.scroll = 0
+        get_logger().info("library mode=%s", self.library_mode)
+
+    def _toggle_favorite(self):
+        if self.screen == "playing":
+            track = self.player.current
+            if not track:
+                return
+            enabled = self.collections.toggle_track(track.path)
+            self.status = "Added to Favorite Songs" if enabled else "Removed from Favorite Songs"
+            self.status_error = False
+        else:
+            entries = self._library_entries()
+            if not entries:
+                return
+            self.selection = min(self.selection, len(entries) - 1)
+            selected = entries[self.selection]
+            if self.library_mode in ("playlists", "favorite_playlists"):
+                enabled = self.collections.toggle_playlist(selected)
+                self.status = "Favorite playlist added" if enabled else "Favorite playlist removed"
+            else:
+                enabled = self.collections.toggle_track(selected.path)
+                self.status = "Favorite song added" if enabled else "Favorite song removed"
+        self.collections.save()
+        self.status_error = False
+        entries = self._library_entries()
+        self.selection = min(self.selection, max(0, len(entries) - 1))
 
     def visible_rows(self):
         return max(3, (self.height - 160) // 52)
@@ -288,8 +405,8 @@ class MusicPlayerApp:
         self.runtime.SDL_RenderClear(self.renderer)
         self.fill(0, 0, self.width, 68, self.PANEL)
         self.fill(0, 66, self.width, 2, self.ACCENT)
-        self.text("LIBRARY" if self.screen == "library" else "NOW PLAYING", 28, 15, "title")
-        subtitle = "%s | %d tracks" % (self.paths.os_name.upper(), len(self.tracks))
+        self.text(self._screen_title(), 28, 15, "title")
+        subtitle = "%s | %d tracks" % (self.paths.os_name.upper(), len(self._library_tracks()))
         subtitle_width = self.measure(subtitle, "small")[0]
         self.text(subtitle, self.width - 28 - subtitle_width, 23, "small", self.MUTED)
         if self.screen == "library":
@@ -297,29 +414,48 @@ class MusicPlayerApp:
         else:
             self._render_playing()
         self._render_footer()
+        if self.exit_confirmation:
+            self._render_exit_confirmation()
         self.runtime.SDL_RenderPresent(self.renderer)
 
     def _render_library(self):
-        if not self.tracks:
-            self.text("No supported music found", self.width // 2, self.height // 2 - 35, "hero", center=True)
-            self.text(self.paths.music_dir, self.width // 2, self.height // 2 + 25, "small", self.MUTED, center=True)
+        entries = self._library_entries()
+        if not entries:
+            message = {
+                "favorites": "No favorite songs yet",
+                "playlists": "No playlist folders found",
+                "favorite_playlists": "No favorite playlists yet",
+                "playlist_tracks": "This playlist is empty",
+            }.get(self.library_mode, "No supported music found")
+            self.text(message, self.width // 2, self.height // 2 - 35, "hero", center=True)
+            detail = "Press Y to change view" if self.tracks else self.paths.music_dir
+            self.text(detail, self.width // 2, self.height // 2 + 25, "small", self.MUTED, center=True)
             return
         rows = self.visible_rows()
         self.scroll = min(self.scroll, self.selection)
         if self.selection >= self.scroll + rows:
             self.scroll = self.selection - rows + 1
         y = 82
-        for index in range(self.scroll, min(len(self.tracks), self.scroll + rows)):
+        for index in range(self.scroll, min(len(entries), self.scroll + rows)):
             selected = index == self.selection
             if selected:
                 self.fill(18, y - 5, self.width - 36, 48, self.ACCENT)
-            track = self.tracks[index]
             color = self.BG if selected else self.TEXT
             folder_color = self.BG if selected else self.MUTED
-            self.text(self.ellipsize(track.title, self.width - 330), 32, y, "body", color)
-            folder = self.ellipsize(track.folder, 245, "small")
-            folder_width = self.measure(folder, "small")[0]
-            self.text(folder, self.width - 32 - folder_width, y + 5, "small", folder_color)
+            entry = entries[index]
+            if self.library_mode in ("playlists", "favorite_playlists"):
+                favorite = self.collections.is_playlist_favorite(entry)
+                title = ("* " if favorite else "") + entry
+                count = len([track for track in self.tracks if track.folder == entry])
+                detail = "%d tracks" % count
+            else:
+                favorite = self.collections.is_track_favorite(entry.path)
+                title = ("* " if favorite else "") + entry.title
+                detail = entry.folder
+            self.text(self.ellipsize(title, self.width - 330), 32, y, "body", color)
+            detail = self.ellipsize(detail, 245, "small")
+            detail_width = self.measure(detail, "small")[0]
+            self.text(detail, self.width - 32 - detail_width, y + 5, "small", folder_color)
             y += 52
 
     def _render_playing(self):
@@ -341,6 +477,10 @@ class MusicPlayerApp:
         self.text("%s / %s" % (elapsed, total), self.width // 2, center_y + 55, "body", center=True)
         state = "PAUSED" if self.runtime.Mix_PausedMusic() else "PLAYING"
         self.text(state, self.width // 2, center_y + 105, "small", self.ACCENT, center=True)
+        button = "A  RESUME" if self.runtime.Mix_PausedMusic() else "A  PAUSE"
+        button_width = 210
+        self.fill(self.width // 2 - button_width // 2, center_y + 145, button_width, 48, self.ACCENT)
+        self.text(button, self.width // 2, center_y + 154, "body", self.BG, center=True)
 
     def _render_footer(self):
         footer_height = 62
@@ -351,17 +491,48 @@ class MusicPlayerApp:
             str(self.settings.get("repeat")).upper(), self.settings.get("volume"),
         )
         self.text(state, 24, y + 18, "small", self.MUTED)
-        hint = "A PLAY  B BACK  X SHUFFLE  Y REPEAT"
+        if self.screen == "library":
+            hint = "A OPEN/PLAY  X FAVORITE  Y VIEW"
+        else:
+            hint = "A PAUSE/RESUME  B LIBRARY  X FAVORITE"
         hint_width = self.measure(hint, "small")[0]
         self.text(hint, self.width - 24 - hint_width, y + 18, "small")
         if self.status:
-            color = self.ACCENT if self.update_manifest else self.ERROR
+            color = self.ERROR if self.status_error else self.ACCENT
             self.fill(0, y - 38, self.width, 38, color)
-            text_color = self.BG if self.update_manifest else self.TEXT
+            text_color = self.TEXT if self.status_error else self.BG
             self.text(self.ellipsize(self.status, self.width - 40, "small"), 20, y - 31, "small", text_color)
+
+    def _render_exit_confirmation(self):
+        width = min(620, self.width - 80)
+        height = 190
+        x = (self.width - width) // 2
+        y = (self.height - height) // 2
+        self.fill(x - 4, y - 4, width + 8, height + 8, self.ACCENT)
+        self.fill(x, y, width, height, self.PANEL)
+        self.text("Exit Music Player?", self.width // 2, y + 38, "hero", center=True)
+        self.text("A  EXIT", self.width // 2 - 120, y + 120, "body", self.ACCENT, center=True)
+        self.text("B  CANCEL", self.width // 2 + 120, y + 120, "body", center=True)
+
+    def _screen_title(self):
+        if self.screen == "playing":
+            return "NOW PLAYING"
+        return {
+            "all": "ALL SONGS",
+            "favorites": "FAVORITE SONGS",
+            "playlists": "PLAYLISTS",
+            "favorite_playlists": "FAVORITE PLAYLISTS",
+            "playlist_tracks": self.active_playlist.upper(),
+        }.get(self.library_mode, "LIBRARY")
+
+    def _library_tracks(self):
+        entries = self._library_entries()
+        if self.library_mode in ("playlists", "favorite_playlists"):
+            names = set(entries)
+            return [track for track in self.tracks if track.folder in names]
+        return entries
 
     @staticmethod
     def _format_time(seconds):
         seconds = max(0, int(seconds))
         return "%d:%02d" % (seconds // 60, seconds % 60)
-

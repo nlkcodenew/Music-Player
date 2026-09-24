@@ -16,7 +16,7 @@ from .ssl_context import verified_context
 
 MANIFEST_ASSET = "ota-manifest.json"
 PROTECTED = {
-    "secrets.json", "settings.json", "pending-reports.json", "identity.json",
+    "secrets.json", "settings.json", "collections.json", "pending-reports.json", "identity.json",
     "music-player.log", "music-player-stdio.log", "music-player-diagnostics.json",
 }
 

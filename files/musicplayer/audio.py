@@ -88,14 +88,18 @@ class AudioPlayer:
 
     def toggle_pause(self):
         if not self.music:
-            return
+            return False
         if self.runtime.Mix_PausedMusic():
             self.runtime.Mix_ResumeMusic()
             self.started_at = time.monotonic()
+            get_logger().info("playback resumed")
+            return False
         else:
             self.position_base = self.position()
             self.runtime.Mix_PauseMusic()
             self.paused_at = self.position_base
+            get_logger().info("playback paused")
+            return True
 
     def position(self):
         if not self.music:
@@ -162,4 +166,3 @@ class AudioPlayer:
     def update(self):
         if self.started and self.music and not self.runtime.Mix_PausedMusic() and not self.runtime.Mix_PlayingMusic():
             self.advance(True, automatic=True)
-

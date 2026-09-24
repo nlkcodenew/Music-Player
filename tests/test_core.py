@@ -11,11 +11,13 @@ FILES = os.path.join(ROOT, "files")
 sys.path.insert(0, FILES)
 
 from musicplayer.audio import AudioPlayer
+from musicplayer.collections import Collections
 from musicplayer.library import natural_key, scan_library
 from musicplayer.paths import RuntimePaths, detect_os
 from musicplayer.reporter import _redact, queue_report
 from musicplayer.settings import Settings
 from musicplayer.updater import apply_update, update_available, validate_manifest, version_tuple
+from musicplayer.ui import MusicPlayerApp
 
 
 class LibraryTests(unittest.TestCase):
@@ -41,7 +43,7 @@ class LibraryTests(unittest.TestCase):
 class PathTests(unittest.TestCase):
     def test_infers_sd_root_from_stock_apps_directory(self):
         with tempfile.TemporaryDirectory() as root:
-            app_dir = os.path.join(root, "Apps", "Music Player")
+            app_dir = os.path.join(root, "Apps", "MusicPlayer")
             os.makedirs(app_dir)
             os.makedirs(os.path.join(root, "Music"))
             paths = RuntimePaths.discover(app_dir=app_dir, environ={})
@@ -49,7 +51,7 @@ class PathTests(unittest.TestCase):
 
     def test_infers_sd_root_from_spruce_app_directory(self):
         with tempfile.TemporaryDirectory() as root:
-            app_dir = os.path.join(root, "App", "Music Player")
+            app_dir = os.path.join(root, "App", "MusicPlayer")
             os.makedirs(app_dir)
             os.makedirs(os.path.join(root, "Music"))
             paths = RuntimePaths.discover(app_dir=app_dir, environ={})
@@ -60,6 +62,18 @@ class PathTests(unittest.TestCase):
 
     def test_defaults_to_stock_without_markers(self):
         self.assertEqual(detect_os("/missing", {}), "stock")
+
+    def test_launcher_log_path_is_preserved_for_issue_reports(self):
+        with tempfile.TemporaryDirectory() as root:
+            app_dir = os.path.join(root, "Apps", "MusicPlayer")
+            os.makedirs(app_dir)
+            os.makedirs(os.path.join(root, "Music"))
+            launcher_log = os.path.join(root, "Logs", "MusicPlayer.txt")
+            paths = RuntimePaths.discover(
+                app_dir=app_dir,
+                environ={"MUSIC_PLAYER_STDIO_LOG": launcher_log},
+            )
+        self.assertEqual(paths.stdio_log_file, launcher_log)
 
 
 class SettingsTests(unittest.TestCase):
@@ -77,11 +91,28 @@ class SettingsTests(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["volume"], 55)
 
+class CollectionTests(unittest.TestCase):
+    def test_favorites_and_folder_playlists_persist(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "collections.json")
+            collections = Collections(path)
+            self.assertTrue(collections.toggle_track(os.path.join(root, "song.mp3")))
+            self.assertTrue(collections.toggle_playlist("Album One"))
+            collections.save()
+            loaded = Collections(path).load()
+            tracks = [
+                mock.Mock(path=os.path.join(root, "song.mp3"), folder="Music"),
+                mock.Mock(path=os.path.join(root, "album.mp3"), folder="Album One"),
+            ]
+            self.assertTrue(loaded.is_track_favorite(os.path.join(root, "song.mp3")))
+            self.assertEqual(loaded.playlists(tracks), ["Album One"])
+            self.assertEqual(loaded.playlists(tracks, favorites_only=True), ["Album One"])
+
 
 class ReporterTests(unittest.TestCase):
     def test_redacts_token_paths_and_mac(self):
         paths = mock.Mock(
-            app_dir="/sd/Apps/Music Player", sdcard_path="/sd", music_dir="/sd/Music"
+            app_dir="/sd/Apps/MusicPlayer", sdcard_path="/sd", music_dir="/sd/Music"
         )
         text = "Authorization: Bearer secret /sd/Music/private-song.mp3\naa:bb:cc:dd:ee:ff github_pat_ABC"
         redacted = _redact(text, paths, ("secret",))
@@ -120,7 +151,7 @@ class UpdaterTests(unittest.TestCase):
 
     def test_update_stays_inside_installed_app_directory(self):
         with tempfile.TemporaryDirectory() as root:
-            app_dir = os.path.join(root, "Apps", "Music Player")
+            app_dir = os.path.join(root, "Apps", "MusicPlayer")
             data_dir = os.path.join(app_dir, "data")
             os.makedirs(data_dir)
             paths = mock.Mock(app_dir=app_dir, data_dir=data_dir)
@@ -142,15 +173,88 @@ class UpdaterTests(unittest.TestCase):
             with open(os.path.join(app_dir, "config.json"), "rb") as handle:
                 self.assertEqual(handle.read(), b"new")
             self.assertTrue(os.path.isfile(os.path.join(app_dir, ".restart")))
-            self.assertFalse(os.path.exists(os.path.join(root, "App", "Music Player")))
+            self.assertFalse(os.path.exists(os.path.join(root, "App", "MusicPlayer")))
+
+class UiLogicTests(unittest.TestCase):
+    def test_library_back_requires_exit_confirmation(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.update_busy = False
+        app.update_manifest = None
+        app.exit_confirmation = False
+        app.screen = "library"
+        app.library_mode = "all"
+        app.running = True
+
+        app._handle("b")
+        self.assertTrue(app.exit_confirmation)
+        self.assertTrue(app.running)
+
+        app._handle("b")
+        self.assertFalse(app.exit_confirmation)
+        self.assertTrue(app.running)
+
+        app._handle("b")
+        app._handle("a")
+        self.assertFalse(app.running)
+
+    def test_library_modes_and_favorite_selection_are_safe(self):
+        first = mock.Mock(path="/music/one.mp3", folder="Album", title="One")
+        second = mock.Mock(path="/music/two.mp3", folder="Album", title="Two")
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.tracks = [first, second]
+        app.collections = Collections("")
+        app.screen = "library"
+        app.library_mode = "all"
+        app.playlist_parent_mode = "playlists"
+        app.active_playlist = ""
+        app.selection = 1
+        app.scroll = 0
+        app.status = ""
+        app.status_error = False
+
+        with mock.patch.object(app.collections, "save"):
+            app._toggle_favorite()
+            app.library_mode = "favorites"
+            self.assertEqual(app._library_entries(), [second])
+            app._toggle_favorite()
+        self.assertEqual(app.selection, 0)
+        self.assertEqual(app._library_entries(), [])
+
+        app._cycle_library_mode()
+        self.assertEqual(app.library_mode, "playlists")
+        self.assertEqual(app._library_entries(), ["Album"])
 
 
 class FakeRuntime:
+    def __init__(self):
+        self.paused = False
+
     def Mix_VolumeMusic(self, value):
         self.volume = value
 
+    def Mix_PausedMusic(self):
+        return self.paused
+
+    def Mix_PauseMusic(self):
+        self.paused = True
+
+    def Mix_ResumeMusic(self):
+        self.paused = False
+
 
 class AudioLogicTests(unittest.TestCase):
+    def test_pause_and_resume(self):
+        runtime = FakeRuntime()
+        player = AudioPlayer(runtime, [], mock.Mock())
+        player.music = object()
+        player.started_at = 1.0
+        with mock.patch.object(player, "position", return_value=12.5):
+            self.assertTrue(player.toggle_pause())
+        self.assertTrue(runtime.paused)
+        self.assertEqual(player.paused_at, 12.5)
+        self.assertFalse(player.toggle_pause())
+        self.assertFalse(runtime.paused)
+
     def test_repeat_navigation(self):
         tracks = [mock.Mock(path=str(index), title=str(index)) for index in range(3)]
         settings = mock.Mock()

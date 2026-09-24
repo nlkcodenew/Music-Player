@@ -1,8 +1,8 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "app": "trimui-music-player",
-  "release_ref": "v1.0.1",
-  "base_url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.1/files",
+  "release_ref": "v1.0.2",
+  "base_url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.2/files",
   "files": [
     {
       "path": "app.py",
@@ -11,8 +11,8 @@
     },
     {
       "path": "launch.sh",
-      "sha256": "a41add759a4bfb8f92c904ffc975bf992a34e5a1a657e0e55aeb9c7b3f361358",
-      "size": 2094
+      "sha256": "d76f92a4555e7e363528b9a670c729edabf17f384cab11652333a9b5c34ff3eb",
+      "size": 3392
     },
     {
       "path": "release.json",
@@ -26,13 +26,18 @@
     },
     {
       "path": "musicplayer/__init__.py",
-      "sha256": "7db531c54817aa94520601a561d4bc3092d073c7ad597ecf412f9e449c47e869",
+      "sha256": "2c53d1a6028b2038e074b2a6fc90b4d8cd90c501404b444b1b6e892147032a58",
       "size": 48
     },
     {
       "path": "musicplayer/audio.py",
-      "sha256": "15583fb41af690d87b5f2289cc17b7de5c8a945f7d27d04589767b2c22c77862",
-      "size": 5737
+      "sha256": "bc16433bb76c0ab8498263b7119efafdcc36910d0525185f7cc8ffba82393132",
+      "size": 5890
+    },
+    {
+      "path": "musicplayer/collections.py",
+      "sha256": "52da544f74be514120a719ff06b5df0f72894af39ef53ca59e80d0b7e6324040",
+      "size": 1873
     },
     {
       "path": "musicplayer/diagnostics.py",
@@ -56,13 +61,13 @@
     },
     {
       "path": "musicplayer/paths.py",
-      "sha256": "167a3c0a2278ea55cd6ea1177de16670d11dfc80c16386246b05cb7d73974f75",
-      "size": 2908
+      "sha256": "88ede524916483dce24127701921d27ba6ef39070179b971b3f57687246e69d9",
+      "size": 3078
     },
     {
       "path": "musicplayer/reporter.py",
-      "sha256": "69b5bfb164ae1e7f10104b133599ab98450ca3a395b7ad07fc6ea0ed6d3537e5",
-      "size": 6796
+      "sha256": "8d5728acea2d4ed95d0e0f0a7252deef3c9abdc553e8055b7015c284f281c241",
+      "size": 6838
     },
     {
       "path": "musicplayer/sdl_runtime.py",
@@ -81,37 +86,37 @@
     },
     {
       "path": "musicplayer/ui.py",
-      "sha256": "11e1a4bd74b1313dabc7461037492894d17b6f17c6af941203b84c010722e6ae",
-      "size": 15390
+      "sha256": "9f06df874d960cbd25597136f9cac610d4dd1a8f357fba59696d9310d8eae661",
+      "size": 23257
     },
     {
       "path": "musicplayer/updater.py",
-      "sha256": "d8a203b328a9b0659b6dd7a270fdf0807ba915f9b778abd2dbb059cf769c307e",
-      "size": 6776
+      "sha256": "fc52fed9cdee19e6e3193a6814ee540c67c6c02e17129b8eb62e1ff2c885515e",
+      "size": 6796
     },
     {
       "path": "certs/cacert.pem",
       "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9",
       "size": 188900,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.1/assets/cacert.pem"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.2/assets/cacert.pem"
     },
     {
       "path": "config.json",
       "sha256": "88ca226e4119a5b356275820b836bf84c4c8e188dcc1383201d174ca0447fe5e",
       "size": 102,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.1/assets/config.json"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.2/assets/config.json"
     },
     {
       "path": "icon.png",
-      "sha256": "74ae21de891cc6d9ee42840a7c973af62926e0f094498f5073fb65f8825ae020",
-      "size": 660,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.1/assets/icon.png"
+      "sha256": "df4f2ee9aec763c26d1262a39b4d395eeada0d1b1fdf33d1ef9339d28a36a723",
+      "size": 10989,
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.2/assets/icon.png"
     },
     {
       "path": "LICENSE.txt",
       "sha256": "c5932e63588c9fc195c782acb2cd69b196f501d3b9189c7e21e538ad1c58c835",
       "size": 1074,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.1/LICENSE"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.2/LICENSE"
     }
   ]
 }
