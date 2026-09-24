@@ -11,6 +11,7 @@ FILES = os.path.join(ROOT, "files")
 sys.path.insert(0, FILES)
 
 from musicplayer.audio import AudioPlayer
+from musicplayer.background import load_resume, save_background_session
 from musicplayer import APP_VERSION
 from musicplayer.audio_output import choose_audio_device, is_usb_audio_device
 from musicplayer.collections import Collections
@@ -19,7 +20,7 @@ from musicplayer.equalizer import Equalizer, preset_gains
 from musicplayer.library import natural_key, scan_library
 from musicplayer.lyrics import load_lyrics, parse_lrc
 from musicplayer.paths import RuntimePaths, detect_os
-from musicplayer.reporter import _redact, queue_report
+from musicplayer.reporter import _redact, _submit, queue_report
 from musicplayer.settings import Settings
 from musicplayer.sleep_timer import SleepTimer
 from musicplayer.updater import apply_update, update_available, validate_manifest, version_tuple
@@ -205,8 +206,55 @@ class ReporterTests(unittest.TestCase):
             second = queue_report(paths, "same_reason", "second")
             with open(paths.pending_reports_file, encoding="utf-8") as handle:
                 pending = json.load(handle)
-        self.assertEqual(first, second)
-        self.assertEqual(len(pending), 1)
+            self.assertEqual(first, second)
+            self.assertEqual(len(pending), 1)
+
+    def test_manual_reports_are_unique_and_snapshot_session_log(self):
+        with tempfile.TemporaryDirectory() as root:
+            session_log = os.path.join(root, "session.log")
+            with open(session_log, "w", encoding="utf-8") as handle:
+                handle.write("complete current session")
+            paths = mock.Mock(
+                pending_reports_file=os.path.join(root, "pending.json"),
+                session_log_file=session_log,
+                log_file=os.path.join(root, "app.log"),
+                stdio_log_file="",
+            )
+            first = queue_report(paths, "manual_diagnostic", unique=True)
+            second = queue_report(paths, "manual_diagnostic", unique=True)
+            with open(paths.pending_reports_file, encoding="utf-8") as handle:
+                pending = json.load(handle)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(pending), 2)
+        self.assertEqual(pending[0]["session_log"], "complete current session")
+
+    def test_long_session_log_continues_in_issue_comments(self):
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(
+                app_dir=os.path.join(root, "MusicPlayer"),
+                sdcard_path=root,
+                music_dir=os.path.join(root, "Music"),
+                data_dir=os.path.join(root, "data"),
+                os_name="stock",
+            )
+            os.makedirs(paths.app_dir)
+            item = {
+                "reason": "manual_diagnostic",
+                "detail": "Submitted with SELECT",
+                "fingerprint": "123456789abc",
+                "session_log": "x" * (90 * 1024),
+            }
+            responses = [[], {"comments_url": "https://api.example/comments"}, {}, {}]
+            with mock.patch(
+                "musicplayer.reporter._request_json", side_effect=responses
+            ) as request:
+                _submit(paths, item, "token", "owner/repo")
+
+        calls = request.call_args_list
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(calls[1].kwargs["method"], "POST")
+        self.assertEqual(calls[2].args[1], "https://api.example/comments")
+        self.assertIn("Session log part 3/3", calls[3].kwargs["body"]["body"])
 
 
 class UpdaterTests(unittest.TestCase):
@@ -253,7 +301,7 @@ class UpdaterTests(unittest.TestCase):
 
 class UiLogicTests(unittest.TestCase):
     def test_release_version_is_visible_in_header_format(self):
-        self.assertEqual("v%s" % APP_VERSION, "v1.2.1")
+        self.assertEqual("v%s" % APP_VERSION, "v1.3.0")
 
     def test_equalizer_menu_changes_preset(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
@@ -433,6 +481,24 @@ class DisplayTests(unittest.TestCase):
             self.assertEqual(calls, [0, 87])
             self.assertFalse(os.path.exists(recovery))
 
+    def test_prepared_screen_off_does_not_write_recovery_during_playback(self):
+        with tempfile.TemporaryDirectory() as root:
+            recovery = os.path.join(root, "display-restore.json")
+            display = DisplayController(device_path="/dev/test", recovery_file=recovery)
+            calls = []
+            with mock.patch.object(
+                type(display), "supported", new_callable=mock.PropertyMock, return_value=True
+            ), mock.patch.object(
+                display, "_saved_brightness", return_value=99
+            ), mock.patch.object(
+                display, "_ioctl", side_effect=lambda command, value=0: calls.append(value) or True
+            ):
+                self.assertTrue(display.prepare())
+                recovery_time = os.path.getmtime(recovery)
+                self.assertTrue(display.screen_off())
+                self.assertEqual(os.path.getmtime(recovery), recovery_time)
+            self.assertEqual(calls, [0])
+
     def test_reads_stock_brightness_key(self):
         display = DisplayController()
         stock_path = "/mnt/UDISK/system.json"
@@ -471,6 +537,7 @@ class FakeAudioRuntime(FakeRuntime):
         self.Mix_Init = lambda flags: flags
         self.Mix_OpenAudioDevice = self.open_audio_device
         self.Mix_SetPostMix = None
+        self.Mix_HookMusicFinished = None
         self.Mix_Quit = None
 
     def audio_devices(self):
@@ -521,6 +588,65 @@ class AudioLogicTests(unittest.TestCase):
         self.assertFalse(player.audio_ready)
         self.assertIn("Audio unavailable", player.output_warning)
         self.assertFalse(player.play(0))
+
+    def test_transient_not_playing_state_does_not_restart_with_finished_hook(self):
+        runtime = FakeRuntime()
+        runtime.Mix_HookMusicFinished = mock.Mock()
+        runtime.Mix_PlayingMusic = mock.Mock(return_value=0)
+        player = AudioPlayer(runtime, [mock.Mock(title="Song")], self.audio_settings())
+        player.audio_ready = True
+        player.started = True
+        player.music = object()
+        player.index = 0
+        player.last_state_log = float("inf")
+        player._install_finished_callback()
+
+        with mock.patch.object(player, "advance") as advance:
+            player.update()
+            advance.assert_not_called()
+            player.finished_callback()
+            with mock.patch.object(player, "position", return_value=120.0), \
+                    mock.patch.object(player, "duration", return_value=120.0):
+                player.update()
+            advance.assert_called_once_with(True, automatic=True)
+
+    def test_background_session_preserves_queue_position_and_sleep_timer(self):
+        with tempfile.TemporaryDirectory() as root:
+            first = os.path.join(root, "one.mp3")
+            second = os.path.join(root, "two.mp3")
+            for path in (first, second):
+                with open(path, "wb") as handle:
+                    handle.write(b"audio")
+            paths = mock.Mock(data_dir=root)
+            player = mock.Mock()
+            player.current = mock.Mock(path=second)
+            player.music = object()
+            player.tracks = [mock.Mock(path=first), player.current]
+            player.position.return_value = 42.5
+            player.runtime.Mix_PausedMusic.return_value = 0
+            timer = SleepTimer(clock=lambda: 100.0)
+            timer.set(1)
+
+            self.assertTrue(save_background_session(paths, player, timer))
+            session_path = os.path.join(root, "background-session.json")
+            with open(session_path, encoding="utf-8") as handle:
+                session = json.load(handle)
+
+        self.assertEqual(session["tracks"], [first, second])
+        self.assertEqual(session["current_path"], second)
+        self.assertEqual(session["position"], 42.5)
+        self.assertEqual(session["sleep_timer"]["remaining"], 900)
+
+    def test_background_status_is_resume_fallback_after_forced_stop(self):
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(data_dir=root)
+            status = {"track_path": "/music/song.mp3", "position": 81.0, "paused": False}
+            status_path = os.path.join(root, "background-status.json")
+            with open(status_path, "w", encoding="utf-8") as handle:
+                json.dump(status, handle)
+
+            self.assertEqual(load_resume(paths), status)
+            self.assertFalse(os.path.exists(status_path))
 
     def test_pause_and_resume(self):
         runtime = FakeRuntime()

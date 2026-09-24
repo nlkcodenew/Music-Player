@@ -53,6 +53,13 @@ def probe_library(paths, names):
 
 
 def collect_diagnostics(paths):
+    background = {}
+    for name in ("background.pid", "background-status.json", "background-resume.json"):
+        path = os.path.join(paths.data_dir, name)
+        background[name] = {
+            "exists": os.path.isfile(path),
+            "size": os.path.getsize(path) if os.path.isfile(path) else 0,
+        }
     return {
         "app_dir": paths.app_dir,
         "sdcard_path": paths.sdcard_path,
@@ -62,6 +69,7 @@ def collect_diagnostics(paths):
         "python": sys.version.replace("\n", " "),
         "machine": platform.machine(),
         "platform": platform.platform(),
+        "background": background,
         "environment": {
             key: os.environ.get(key, "")
             for key in (

@@ -4,7 +4,7 @@ Music Player is a self-contained music player for TrimUI Brick Pro Stock OS and
 Spruce OS. It does not require NextUI libraries or place a hidden application
 directory at the SD-card root.
 
-## Version 1.2.1
+## Version 1.3.0
 
 - Detect Stock OS and Spruce OS at runtime.
 - Scan the SD card recursively for WAV, MP3, OGG, FLAC and OPUS files.
@@ -12,27 +12,28 @@ directory at the SD-card root.
 - Display synchronized offline LRC lyrics and optional translated LRC lines.
 - Stop after a preset time or at the end of the current track with Sleep Timer.
 - Turn off the Brick Pro display while playback continues, then wake on any input.
+- Return to the OS while a separate background service continues playback.
 - Show the installed version beside every main screen title.
 - Apply a three-band Equalizer with presets before speaker, Bluetooth or USB output.
 - Prefer a connected USB Audio DAC in Auto mode and fall back to system audio.
 - Bundle a consistent AArch64 SDL2_mixer runtime with FLAC decoding.
 - Negotiate Bluetooth/BlueALSA sample rates and keep the UI open if audio is unavailable.
+- Use SDL_mixer's finished callback so a temporary Bluetooth stall cannot restart a track.
 - Persist volume, shuffle, repeat and the last selected track.
 - Rotate local logs and preserve pending error reports.
-- Create deduplicated GitHub Issues when an Issues-only token is configured.
+- Create a new GitHub Issue with the complete current-session log for every manual report.
 - Update in place over verified TLS with SHA-256 validation and atomic writes.
 - Keep the complete application in one visible menu directory.
 
 AAC/M4A, album art, online lyrics/translation, radio, podcasts and crossfade are
-not included. Screen-off Playback keeps music running while this app remains open;
-it is not a background service after launching another application.
+not included.
 
 ## Install
 
 Download exactly one package from the GitHub release:
 
-- Stock OS: `trimui-music-player-v1.2.1-stock.zip`
-- Spruce OS: `trimui-music-player-v1.2.1-spruce.zip`
+- Stock OS: `trimui-music-player-v1.3.0-stock.zip`
+- Spruce OS: `trimui-music-player-v1.3.0-spruce.zip`
 
 Extract the selected ZIP directly to the SD-card root. Do not copy files between
 folders manually.
@@ -83,15 +84,33 @@ the SD-card root.
 - Start: library / now playing
 - Select: open Quick Menu
 
+Active Repeat and Shuffle modes are displayed on the Now Playing screen. Repeat
+One intentionally restarts the current song; Repeat All can restart a one-song
+queue.
+
 To exit, press **B** in Library, then **A** to confirm. Press **B** again to
 cancel. The footer displays the controls for the current screen.
 
-Quick Menu provides Lyrics, Sleep Timer, Screen-off Playback, diagnostics and
-OTA installation. It also provides Equalizer and Audio Output. Use Up/Down to
-select, A to activate, B or Select to close.
+Quick Menu provides Lyrics, Sleep Timer, Screen-off Playback, Background
+Playback, diagnostics and OTA installation. It also provides Equalizer and
+Audio Output. Use Up/Down to select, A to activate, B or Select to close.
 On Sleep Timer, Left/Right or A cycles Off, 15, 30, 45, 60, 90 minutes and End
 of track. Any controller input wakes the screen without also triggering an app
 action.
+
+## Background Playback
+
+Start a song, then choose `Select > Background Playback (Return to OS)`. Music,
+Bluetooth output, EQ, repeat, shuffle and Sleep Timer continue in a detached
+audio service after the Music Player window closes. Open Music Player again to
+stop the service, reclaim the audio device and resume the same track near its
+current position.
+
+Linux audio devices on these firmwares may be exclusive. Navigating the OS and
+using applications that do not open audio can run alongside background music.
+A game or application that requests exclusive ALSA/BlueALSA access may conflict
+with Music Player; stop background playback by opening Music Player before using
+that application's audio.
 
 ## Equalizer
 
@@ -107,8 +126,8 @@ again by A2DP and should not be described as lossless.
 ## FLAC And USB DAC
 
 FLAC is decoded locally without lossy transcoding. The current playback pipeline
-outputs stereo PCM at 16-bit/48 kHz for broad Stock OS, Spruce OS, Bluetooth and
-USB Audio compatibility. This release therefore does not claim bit-perfect or
+outputs stereo 16-bit PCM at the sample rate negotiated with Stock OS, Spruce OS,
+Bluetooth or USB Audio. This release therefore does not claim bit-perfect or
 native high-resolution output, even when the source FLAC or DAC supports it.
 
 Audio Output modes are available in Quick Menu:
@@ -157,7 +176,9 @@ cd "/mnt/SDCARD/Apps/MusicPlayer" # Stock OS
 ```
 
 Use `/mnt/SDCARD/App/MusicPlayer` on Spruce OS. Diagnostics and bounded logs
-are written in the same application directory.
+are written in the same application directory. Playback state is logged every
+10 seconds during this diagnostic phase, including position, duration, repeat,
+shuffle and SDL end-of-track state.
 
 ## GitHub Issues
 
@@ -167,6 +188,9 @@ write** for `nlkcodenew/Music-Player`.
 
 `secrets.json`, settings, identity, pending reports, logs and diagnostics are
 never committed, packaged or replaced by OTA. Tokens are never written to logs.
+Every press of `Send Diagnostic` creates a separate Issue. The complete log from
+that application session is snapshotted immediately; long logs continue in Issue
+comments, and failed uploads remain queued for retry.
 
 ## Development
 

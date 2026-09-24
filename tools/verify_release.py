@@ -16,7 +16,9 @@ PACKAGES = {
 EXCLUDED = {
     "secrets.json", "settings.json", "collections.json", "pending-reports.json", "identity.json",
     "display-restore.json", "music-player.log", "music-player-stdio.log",
-    "music-player-diagnostics.json",
+    "music-player-session.log", "music-player-session-stdio.log", "music-player-diagnostics.json",
+    "background-session.json", "background-command", "background.pid",
+    "background-status.json", "background-resume.json",
 }
 
 

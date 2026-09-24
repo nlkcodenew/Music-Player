@@ -1,3 +1,4 @@
+import ctypes
 import random
 import time
 
@@ -24,6 +25,8 @@ AUDIO_CONFIGS = (
     (16000, 512),
 )
 
+MUSIC_FINISHED_CALLBACK = ctypes.CFUNCTYPE(None)
+
 
 class AudioPlayer:
     def __init__(self, runtime, tracks, settings):
@@ -43,6 +46,9 @@ class AudioPlayer:
         self.output_warning = ""
         self.audio_ready = False
         self.sample_rate = 0
+        self.music_finished = False
+        self.finished_callback = None
+        self.last_state_log = 0.0
 
     def initialize(self):
         flags = MIX_INIT_FLAC | MIX_INIT_MP3 | MIX_INIT_OGG | MIX_INIT_OPUS
@@ -76,6 +82,7 @@ class AudioPlayer:
         spec = self.runtime.mixer_spec()
         self.sample_rate = spec[0] if spec else 44100
         self.equalizer.set_sample_rate(self.sample_rate)
+        self._install_finished_callback()
         get_logger().info(
             "audio output=%s mode=%s devices=%s spec=%s",
             self.output_device, self.settings.get("audio_output"), devices, spec,
@@ -88,6 +95,18 @@ class AudioPlayer:
             get_logger().warning("equalizer unavailable on this Python/SDL_mixer runtime")
         self.set_volume(int(self.settings.get("volume")))
         return True
+
+    def _install_finished_callback(self):
+        hook = getattr(self.runtime, "Mix_HookMusicFinished", None)
+        if not hook:
+            return
+
+        @MUSIC_FINISHED_CALLBACK
+        def finished():
+            self.music_finished = True
+
+        self.finished_callback = finished
+        hook(ctypes.cast(finished, ctypes.c_void_p))
 
     def _open_audio(self, device, attempts):
         encoded = device.encode("utf-8") if device else None
@@ -116,6 +135,10 @@ class AudioPlayer:
 
     def close(self):
         self.stop()
+        hook = getattr(self.runtime, "Mix_HookMusicFinished", None)
+        if hook and self.finished_callback:
+            hook(None)
+        self.finished_callback = None
         self.equalizer.uninstall()
         if self.audio_ready:
             self.runtime.Mix_CloseAudio()
@@ -157,20 +180,31 @@ class AudioPlayer:
         self.music = music
         self.index = index
         self.started = True
+        self.music_finished = False
         self.started_at = time.monotonic()
         self.position_base = 0.0
         self.paused_at = 0.0
         self.error = ""
         self.settings.set("last_track", track.path)
-        get_logger().info("playing index=%d format=%s", index, track.extension)
+        get_logger().info(
+            "playback started index=%d title=%r format=%s tracks=%d duration=%.3f repeat=%s shuffle=%s",
+            index, track.title, track.extension, len(self.tracks), self.duration(),
+            self.settings.get("repeat"), self.settings.get("shuffle"),
+        )
         return True
 
     def stop(self):
         if self.music:
+            track = self.current
+            get_logger().info(
+                "playback stopping index=%d title=%r position=%.3f duration=%.3f",
+                self.index, track.title if track else "", self.position(), self.duration(),
+            )
             self.runtime.Mix_HaltMusic()
             self.runtime.Mix_FreeMusic(self.music)
         self.music = None
         self.started = False
+        self.music_finished = False
 
     def fade_stop(self, steps=10, delay=0.05):
         if not self.music:
@@ -244,6 +278,7 @@ class AudioPlayer:
             return -1
         repeat = self.settings.get("repeat")
         if automatic and repeat == "one" and self.index >= 0:
+            get_logger().info("automatic navigation repeats current track index=%d", self.index)
             return self.index
         if self.settings.get("shuffle") and len(self.tracks) > 1:
             return random.choice([index for index in range(len(self.tracks)) if index != self.index])
@@ -256,11 +291,37 @@ class AudioPlayer:
 
     def advance(self, forward=True, automatic=False):
         target = self.next_index(forward, automatic)
+        get_logger().info(
+            "playback advance from=%d target=%d automatic=%s repeat=%s shuffle=%s",
+            self.index, target, automatic, self.settings.get("repeat"), self.settings.get("shuffle"),
+        )
         if target < 0:
             self.stop()
             return False
         return self.play(target)
 
     def update(self):
-        if self.audio_ready and self.started and self.music and not self.runtime.Mix_PausedMusic() and not self.runtime.Mix_PlayingMusic():
+        if not self.audio_ready or not self.started or not self.music:
+            return
+        now = time.monotonic()
+        if now - self.last_state_log >= 10.0:
+            self.last_state_log = now
+            track = self.current
+            get_logger().info(
+                "playback state index=%d title=%r position=%.3f duration=%.3f playing=%s paused=%s "
+                "finished=%s repeat=%s shuffle=%s",
+                self.index, track.title if track else "", self.position(), self.duration(),
+                bool(self.runtime.Mix_PlayingMusic()), bool(self.runtime.Mix_PausedMusic()),
+                self.music_finished, self.settings.get("repeat"), self.settings.get("shuffle"),
+            )
+        finished = self.music_finished
+        if not getattr(self.runtime, "Mix_HookMusicFinished", None):
+            finished = not self.runtime.Mix_PausedMusic() and not self.runtime.Mix_PlayingMusic()
+        if finished:
+            self.music_finished = False
+            track = self.current
+            get_logger().info(
+                "playback finished index=%d title=%r position=%.3f duration=%.3f",
+                self.index, track.title if track else "", self.position(), self.duration(),
+            )
             self.advance(True, automatic=True)

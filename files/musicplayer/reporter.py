@@ -5,6 +5,7 @@ import platform
 import re
 import socket
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -15,8 +16,8 @@ from .settings import atomic_json_write
 from .ssl_context import verified_context
 
 
-MAX_LOG_TAIL = 48 * 1024
-MAX_PENDING = 8
+MAX_ISSUE_CHUNK = 42 * 1024
+MAX_PENDING = 32
 TOKEN_PATTERNS = (
     re.compile(r"(?i)(authorization\s*:\s*(?:bearer|token)\s+)[^\s]+"),
     re.compile(r"\b(?:ghp|github_pat|gho|ghu|ghs|ghr)_[A-Za-z0-9_]+\b"),
@@ -75,34 +76,59 @@ def _redact(text, paths, secrets=()):
     return text
 
 
-def _log_tail(paths):
+def _session_log(paths):
+    for path in (
+        getattr(paths, "session_stdio_log_file", ""),
+        getattr(paths, "session_log_file", ""),
+    ):
+        if not isinstance(path, (str, bytes, os.PathLike)) or not path:
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                value = handle.read()
+            if value:
+                return value
+        except OSError:
+            pass
     chunks = []
     for path in (paths.log_file, getattr(paths, "stdio_log_file", "")):
-        if not path:
+        if not isinstance(path, (str, bytes, os.PathLike)) or not path:
             continue
         try:
             with open(path, "rb") as handle:
                 handle.seek(0, os.SEEK_END)
                 size = handle.tell()
-                handle.seek(max(0, size - MAX_LOG_TAIL // 2))
+                handle.seek(max(0, size - MAX_ISSUE_CHUNK // 2))
                 chunks.append(handle.read().decode("utf-8", "replace"))
         except OSError:
             pass
-    return "\n".join(chunks)[-MAX_LOG_TAIL:]
+    return "\n".join(chunks)[-MAX_ISSUE_CHUNK:]
 
 
-def queue_report(paths, reason, detail=""):
+def queue_report(paths, reason, detail="", unique=False):
     pending = _read_json(paths.pending_reports_file, [])
     if not isinstance(pending, list):
         pending = []
-    fingerprint = hashlib.sha256(reason.encode("utf-8", "replace")).hexdigest()[:12]
+    identity = "%s:%s" % (APP_VERSION, reason)
+    if unique:
+        identity += ":%s:%s" % (time.time_ns(), os.urandom(4).hex())
+    fingerprint = hashlib.sha256(identity.encode("utf-8", "replace")).hexdigest()[:12]
     existing = next(
-        (item for item in pending if isinstance(item, dict) and item.get("reason") == reason),
+        (
+            item for item in pending
+            if not unique and isinstance(item, dict) and item.get("identity") == identity
+        ),
         None,
     )
     if existing:
         return existing.get("fingerprint", fingerprint)
-    pending.append({"reason": reason[:80], "detail": detail[:2000], "fingerprint": fingerprint})
+    pending.append({
+        "reason": reason[:80],
+        "detail": detail[:2000],
+        "fingerprint": fingerprint,
+        "identity": identity,
+        "session_log": _session_log(paths),
+    })
     atomic_json_write(paths.pending_reports_file, pending[-MAX_PENDING:])
     return fingerprint
 
@@ -136,9 +162,19 @@ def _submit(paths, item, token, repo):
     )
     issues_url = "https://api.github.com/repos/%s/issues" % repo
     existing = _request_json(paths, issues_url + "?state=all&per_page=100", token)
-    if any(fingerprint in issue.get("title", "") for issue in existing if isinstance(issue, dict)):
-        return
+    existing_issue = next(
+        (
+            issue for issue in existing
+            if isinstance(issue, dict) and fingerprint in issue.get("title", "")
+        ),
+        None,
+    )
     secret_values = (token,)
+    log_text = _redact(item.get("session_log") or _session_log(paths), paths, secret_values)
+    chunks = [
+        log_text[index:index + MAX_ISSUE_CHUNK]
+        for index in range(0, len(log_text), MAX_ISSUE_CHUNK)
+    ] or [""]
     body = "\n".join((
         "Automatic diagnostic report.",
         "",
@@ -149,12 +185,33 @@ def _submit(paths, item, token, repo):
         "- Python: `%s`" % sys.version.split()[0],
         "- Reason: `%s`" % item["reason"],
         "- Detail: `%s`" % _redact(item.get("detail", ""), paths, secret_values),
+        "- Session log parts: `%d`" % len(chunks),
         "",
         "```text",
-        _redact(_log_tail(paths), paths, secret_values),
+        chunks[0],
         "```",
     ))
-    _request_json(paths, issues_url, token, method="POST", body={"title": title, "body": body})
+    created = existing_issue or _request_json(
+        paths, issues_url, token, method="POST", body={"title": title, "body": body}
+    )
+    comments_url = created.get("comments_url", "") if isinstance(created, dict) else ""
+    posted_parts = set()
+    if existing_issue and comments_url:
+        comments = _request_json(paths, comments_url + "?per_page=100", token)
+        for comment in comments if isinstance(comments, list) else []:
+            match = re.search(r"Session log part (\d+)/(\d+)", comment.get("body", ""))
+            if match:
+                posted_parts.add(int(match.group(1)))
+    for index, chunk in enumerate(chunks[1:], 2):
+        if not comments_url:
+            break
+        if index in posted_parts:
+            continue
+        _request_json(paths, comments_url, token, method="POST", body={
+            "body": "Session log part %d/%d\n\n```text\n%s\n```" % (
+                index, len(chunks), chunk,
+            )
+        })
 
 
 def retry_pending(paths):

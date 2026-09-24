@@ -2,6 +2,7 @@ import argparse
 import ctypes
 import json
 import os
+import time
 
 from .logger import get_logger
 
@@ -73,18 +74,40 @@ class DisplayController:
             except FileNotFoundError:
                 pass
 
+    def prepare(self):
+        if not self.supported:
+            return False
+        try:
+            self.original_brightness = self._saved_brightness()
+            self._write_recovery(self.original_brightness)
+            get_logger().info(
+                "display recovery prepared brightness=%d", self.original_brightness
+            )
+            return True
+        except (OSError, ValueError) as error:
+            get_logger().warning("cannot prepare display recovery: %s", error)
+            self.original_brightness = None
+            self._clear_recovery()
+            return False
+
     def screen_off(self):
         if self.is_off:
             return True
         if not self.supported:
             return False
+        started = time.monotonic()
         try:
-            brightness = self._saved_brightness()
-            self._write_recovery(brightness)
+            brightness = self.original_brightness
+            if brightness is None:
+                brightness = self._saved_brightness()
+                self._write_recovery(brightness)
             self._ioctl(DISP_LCD_SET_BRIGHTNESS, 0)
             self.original_brightness = brightness
             self.is_off = True
-            get_logger().info("screen-off playback enabled restore_brightness=%d", brightness)
+            get_logger().info(
+                "screen-off playback enabled restore_brightness=%d elapsed_ms=%.1f",
+                brightness, (time.monotonic() - started) * 1000.0,
+            )
             return True
         except (OSError, ValueError) as error:
             get_logger().warning("cannot turn screen off: %s", error)
@@ -101,11 +124,15 @@ class DisplayController:
                 brightness = None
         if brightness is None:
             return True
+        started = time.monotonic()
         try:
             if not self.supported:
                 return False
             self._ioctl(DISP_LCD_SET_BRIGHTNESS, max(1, min(255, brightness)))
-            get_logger().info("display brightness restored=%d", brightness)
+            get_logger().info(
+                "display brightness restored=%d elapsed_ms=%.1f",
+                brightness, (time.monotonic() - started) * 1000.0,
+            )
             self.original_brightness = None
             self.is_off = False
             self._clear_recovery()

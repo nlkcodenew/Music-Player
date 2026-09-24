@@ -8,7 +8,7 @@ MAX_LOG_BYTES = 512 * 1024
 BACKUP_COUNT = 2
 
 
-def init_logging(path):
+def init_logging(path, session_path=None, append_session=False):
     logger = logging.getLogger(LOGGER_NAME)
     if logger.handlers:
         return logger
@@ -23,6 +23,13 @@ def init_logging(path):
     )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+    if session_path:
+        os.makedirs(os.path.dirname(session_path), exist_ok=True)
+        session_handler = logging.FileHandler(
+            session_path, mode="a" if append_session else "w", encoding="utf-8"
+        )
+        session_handler.setFormatter(formatter)
+        logger.addHandler(session_handler)
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
@@ -31,4 +38,3 @@ def init_logging(path):
 
 def get_logger():
     return logging.getLogger(LOGGER_NAME)
-

@@ -47,6 +47,8 @@ class RuntimePaths:
     data_dir: str
     settings_file: str
     log_file: str
+    session_log_file: str
+    session_stdio_log_file: str
     stdio_log_file: str
     pending_reports_file: str
     collections_file: str
@@ -77,6 +79,8 @@ class RuntimePaths:
             data_dir=data_dir,
             settings_file=os.path.join(data_dir, "settings.json"),
             log_file=os.path.join(app_dir, "music-player.log"),
+            session_log_file=os.path.join(data_dir, "music-player-session.log"),
+            session_stdio_log_file=os.path.join(data_dir, "music-player-session-stdio.log"),
             stdio_log_file=environ.get("MUSIC_PLAYER_STDIO_LOG") or os.path.join(
                 app_dir, "music-player-stdio.log"
             ),

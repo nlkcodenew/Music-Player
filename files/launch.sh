@@ -18,9 +18,13 @@ else
     STDIO_LOG="$APP/music-player-stdio.log"
 fi
 LOG_FILE="$APP/music-player.log"
+SESSION_STDIO_LOG="$APP/data/music-player-session-stdio.log"
 export MUSIC_PLAYER_STDIO_LOG="$STDIO_LOG"
+export MUSIC_PLAYER_SESSION_STDIO_LOG="$SESSION_STDIO_LOG"
+export PYTHONUNBUFFERED=1
 
 mkdir -p "$(dirname "$STDIO_LOG")" 2>/dev/null
+mkdir -p "$APP/data" 2>/dev/null
 {
     echo "================================================"
     echo "Music Player launcher"
@@ -88,6 +92,56 @@ else
 fi
 
 touch /tmp/stay_alive 2>/dev/null
+KEEP_STAY_ALIVE=0
+
+BACKGROUND_PID="$APP/data/background.pid"
+BACKGROUND_COMMAND="$APP/data/background-command"
+RESUMING_BACKGROUND=0
+is_music_background() {
+    [ -n "$1" ] && [ -r "/proc/$1/cmdline" ] || return 1
+    CMDLINE="$(tr '\000' ' ' < "/proc/$1/cmdline" 2>/dev/null)"
+    case "$CMDLINE" in
+        *app.py*--background*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+if [ -f "$BACKGROUND_PID" ]; then
+    BG_PID="$(cat "$BACKGROUND_PID" 2>/dev/null)"
+    if is_music_background "$BG_PID"; then
+        RESUMING_BACKGROUND=1
+        echo "foreground" > "$BACKGROUND_COMMAND"
+        COUNT=0
+        while is_music_background "$BG_PID" && [ "$COUNT" -lt 50 ]; do
+            sleep 0.1
+            COUNT=$((COUNT + 1))
+        done
+        if is_music_background "$BG_PID"; then
+            kill "$BG_PID" 2>/dev/null || true
+            COUNT=0
+            while is_music_background "$BG_PID" && [ "$COUNT" -lt 20 ]; do
+                sleep 0.1
+                COUNT=$((COUNT + 1))
+            done
+        fi
+        if is_music_background "$BG_PID"; then
+            kill -9 "$BG_PID" 2>/dev/null || true
+        fi
+    else
+        rm -f "$BACKGROUND_PID" "$BACKGROUND_COMMAND" 2>/dev/null
+    fi
+fi
+
+if [ "$RESUMING_BACKGROUND" -eq 0 ]; then
+    : > "$SESSION_STDIO_LOG"
+fi
+{
+    echo "================================================"
+    echo "Music Player session"
+    date 2>/dev/null || true
+    echo "app=$APP"
+    echo "os=$MUSIC_PLAYER_OS"
+    echo "args=$*"
+} >> "$SESSION_STDIO_LOG" 2>&1
 
 restore_display() {
     RECOVERY_FILE="$APP/data/display-restore.json"
@@ -98,7 +152,7 @@ restore_display() {
 
 cleanup_launcher() {
     restore_display
-    rm -f /tmp/stay_alive 2>/dev/null
+    [ "$KEEP_STAY_ALIVE" -eq 1 ] || rm -f /tmp/stay_alive 2>/dev/null
 }
 
 trap cleanup_launcher EXIT
@@ -111,10 +165,18 @@ while true; do
         mv -f "$STDIO_LOG" "$STDIO_LOG.1"
         echo "Music Player log rotated" > "$STDIO_LOG"
     fi
-    "$PYTHON" app.py "$@" >> "$STDIO_LOG" 2>&1
+    "$PYTHON" app.py "$@" >> "$SESSION_STDIO_LOG" 2>&1
     STATUS=$?
     restore_display
     echo "app_exit=$STATUS" >> "$STDIO_LOG"
+    if [ "$STATUS" -eq 20 ]; then
+        KEEP_STAY_ALIVE=1
+        nohup "$PYTHON" app.py --background </dev/null >> "$SESSION_STDIO_LOG" 2>&1 &
+        BG_PID=$!
+        echo "$BG_PID" > "$BACKGROUND_PID"
+        echo "background_pid=$BG_PID" >> "$STDIO_LOG"
+        exit 0
+    fi
     if [ "$STATUS" -ne 0 ]; then
         "$PYTHON" app.py --diagnose >> "$STDIO_LOG" 2>&1 || true
         "$PYTHON" -m musicplayer.reporter --reason "exit_$STATUS" >> "$STDIO_LOG" 2>&1 || true
@@ -124,5 +186,7 @@ while true; do
     fi
     [ -f "$APP/.restart" ] || break
 done
+
+cat "$SESSION_STDIO_LOG" >> "$STDIO_LOG" 2>/dev/null || true
 
 exit "$STATUS"

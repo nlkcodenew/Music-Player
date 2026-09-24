@@ -194,6 +194,9 @@ class SDLRuntime:
         self.Mix_ResumeMusic = _bind(self.mixer, "Mix_ResumeMusic", [], None)
         self.Mix_PausedMusic = _bind(self.mixer, "Mix_PausedMusic", [])
         self.Mix_PlayingMusic = _bind(self.mixer, "Mix_PlayingMusic", [])
+        self.Mix_HookMusicFinished = _bind(
+            self.mixer, "Mix_HookMusicFinished", [c_void_p], None, required=False,
+        )
         self.Mix_VolumeMusic = _bind(self.mixer, "Mix_VolumeMusic", [c_int])
         self.Mix_SetMusicPosition = _bind(self.mixer, "Mix_SetMusicPosition", [c_double], required=False)
         self.Mix_GetMusicPosition = _bind(self.mixer, "Mix_GetMusicPosition", [c_void_p], c_double, required=False)

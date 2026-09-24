@@ -4,6 +4,7 @@ import threading
 from . import APP_VERSION
 from .audio import AudioPlayer
 from .audio_output import OUTPUT_MODES, output_mode_label
+from .background import BACKGROUND_EXIT, load_resume, save_background_session
 from .collections import Collections
 from .display import DisplayController
 from .input import InputState
@@ -73,9 +74,11 @@ class MusicPlayerApp:
         self.sleep_timer = SleepTimer()
         self.display = DisplayController(paths)
         self.lyrics_cache = {}
+        self.exit_code = 0
 
     def initialize(self):
         self.display.restore()
+        self.display.prepare()
         self.runtime = SDLRuntime(self.paths)
         flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER
         if self.runtime.SDL_Init(flags) != 0:
@@ -111,6 +114,7 @@ class MusicPlayerApp:
             self.status = self.player.output_warning
             self.status_error = True
         self._restore_selection()
+        self._resume_background_playback()
         if self.settings.get("auto_update"):
             threading.Thread(target=self._check_update, name="ota-check", daemon=True).start()
 
@@ -133,6 +137,40 @@ class MusicPlayerApp:
             if track.path == last_track:
                 self.selection = index
                 break
+
+    def _resume_background_playback(self):
+        resume = load_resume(self.paths)
+        if not resume or not self.player.audio_ready:
+            return
+        track_path = resume.get("track_path", "")
+        index = next(
+            (index for index, track in enumerate(self.player.tracks) if track.path == track_path),
+            -1,
+        )
+        if index < 0 or not self.player.play(index):
+            get_logger().warning("cannot resume background track=%r", track_path)
+            return
+        position = max(0.0, float(resume.get("position", 0.0)))
+        if position >= 1.0 and not self.player.seek(position - self.player.position()):
+            get_logger().warning("cannot resume background position=%.3f", position)
+        if resume.get("paused"):
+            self.player.toggle_pause()
+        sleep_value = resume.get("sleep_timer")
+        if isinstance(sleep_value, dict):
+            preset = int(sleep_value.get("preset", 0))
+            if preset == 6:
+                self.sleep_timer.set(preset, sleep_value.get("track_path", ""))
+            elif 0 < preset < 6:
+                self.sleep_timer.preset_index = preset
+                self.sleep_timer.deadline = self.sleep_timer.clock() + max(
+                    0, int(sleep_value.get("remaining", 0))
+                )
+        self.screen = "playing"
+        self.status = "Background playback resumed"
+        get_logger().info(
+            "background playback resumed index=%d position=%.3f paused=%s",
+            index, position, bool(resume.get("paused")),
+        )
 
     def _check_update(self):
         try:
@@ -180,7 +218,16 @@ class MusicPlayerApp:
 
         def worker():
             try:
-                queue_report(self.paths, "manual_diagnostic", "Submitted with SELECT")
+                get_logger().info(
+                    "manual diagnostic requested screen=%s track=%r position=%.3f duration=%.3f "
+                    "repeat=%s shuffle=%s background_exit=%s",
+                    self.screen, self.player.current.title if self.player.current else "",
+                    self.player.position(), self.player.duration(), self.settings.get("repeat"),
+                    self.settings.get("shuffle"), self.exit_code == BACKGROUND_EXIT,
+                )
+                queue_report(
+                    self.paths, "manual_diagnostic", "Submitted with SELECT", unique=True
+                )
                 if retry_pending(self.paths):
                     self.status = "Diagnostic report sent to GitHub Issues"
                 else:
@@ -246,7 +293,7 @@ class MusicPlayerApp:
                 else:
                     self._render()
                     self.runtime.SDL_Delay(16)
-            return 0
+            return self.exit_code
         finally:
             self.cleanup()
 
@@ -314,7 +361,11 @@ class MusicPlayerApp:
             else:
                 values = ("off", "all", "one")
                 current = values.index(self.settings.get("repeat"))
-                self.settings.set("repeat", values[(current + 1) % len(values)])
+                repeat = values[(current + 1) % len(values)]
+                self.settings.set("repeat", repeat)
+                self.status = "Repeat: %s" % repeat.title()
+                self.status_error = False
+                get_logger().info("repeat mode changed=%s", repeat)
             return
         if self.screen == "library":
             entries = self._library_entries()
@@ -367,6 +418,7 @@ class MusicPlayerApp:
             ),
             ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
             ("screen_off", "Screen-off Playback"),
+            ("background", "Background Playback (Return to OS)"),
         ]
         if self.update_manifest:
             entries.append(("update", "Install Update v%s" % self.update_manifest["version"]))
@@ -426,6 +478,18 @@ class MusicPlayerApp:
             elif not self.display.screen_off():
                 self.status = "Screen-off playback is unavailable on this firmware"
                 self.status_error = True
+        elif selected == "background":
+            if not self.player.current or not self.player.music:
+                self.status = "Play a song before starting Background Playback"
+                self.status_error = True
+            elif save_background_session(self.paths, self.player, self.sleep_timer):
+                get_logger().info(
+                    "background playback requested track=%r position=%.3f duration=%.3f",
+                    self.player.current.title, self.player.position(), self.player.duration(),
+                )
+                self.exit_code = BACKGROUND_EXIT
+                self.quick_menu = False
+                self.running = False
         elif selected == "update":
             self.quick_menu = False
             self._install_update()
@@ -692,6 +756,14 @@ class MusicPlayerApp:
         center_y = self.height // 2
         self.text(self.ellipsize(track.title, self.width - 100, "hero"), self.width // 2, center_y - 115, "hero", center=True)
         self.text(track.folder, self.width // 2, center_y - 55, "body", self.MUTED, center=True)
+        modes = []
+        repeat = self.settings.get("repeat")
+        if repeat != "off":
+            modes.append("REPEAT %s" % repeat.upper())
+        if self.settings.get("shuffle"):
+            modes.append("SHUFFLE ON")
+        if modes:
+            self.text(" | ".join(modes), self.width // 2, center_y - 18, "small", self.ACCENT, center=True)
         position = self.player.position()
         duration = self.player.duration()
         progress_width = self.width - 160
