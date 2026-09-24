@@ -78,6 +78,11 @@ echo "python=$PYTHON" >> "$STDIO_LOG"
 
 if [ -d "$SDCARD_PATH/spruce" ]; then
     export MUSIC_PLAYER_OS=spruce
+    export HOME="$APP/data/home"
+    mkdir -p "$HOME"
+    if [ -x "$SDCARD_PATH/spruce/scripts/asound-setup.sh" ]; then
+        "$SDCARD_PATH/spruce/scripts/asound-setup.sh" "$HOME" >> "$STDIO_LOG" 2>&1 || true
+    fi
 else
     export MUSIC_PLAYER_OS=stock
 fi

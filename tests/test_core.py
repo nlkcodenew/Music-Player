@@ -12,8 +12,10 @@ sys.path.insert(0, FILES)
 
 from musicplayer.audio import AudioPlayer
 from musicplayer import APP_VERSION
+from musicplayer.audio_output import choose_audio_device, is_usb_audio_device
 from musicplayer.collections import Collections
 from musicplayer.display import DisplayController
+from musicplayer.equalizer import Equalizer, preset_gains
 from musicplayer.library import natural_key, scan_library
 from musicplayer.lyrics import load_lyrics, parse_lrc
 from musicplayer.paths import RuntimePaths, detect_os
@@ -94,6 +96,72 @@ class SettingsTests(unittest.TestCase):
             settings.save()
             with open(path, encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["volume"], 55)
+
+    def test_equalizer_and_output_values_are_normalized(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "settings.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "eq_preset": "Unknown", "eq_bass": 99,
+                    "eq_mid": -99, "audio_output": "invalid",
+                }, handle)
+            settings = Settings(path).load()
+        self.assertEqual(settings.get("eq_preset"), "Flat")
+        self.assertEqual(settings.get("eq_bass"), 6)
+        self.assertEqual(settings.get("eq_mid"), -6)
+        self.assertEqual(settings.get("audio_output"), "auto")
+
+class AudioOutputTests(unittest.TestCase):
+    def test_auto_and_usb_modes_prefer_usb_dac(self):
+        devices = ["ALSA Default", "FiiO USB DAC"]
+        self.assertTrue(is_usb_audio_device(devices[1]))
+        self.assertEqual(choose_audio_device(devices, "auto"), devices[1])
+        self.assertEqual(choose_audio_device(devices, "usb"), devices[1])
+        self.assertIsNone(choose_audio_device(devices, "system"))
+
+    def test_usb_mode_falls_back_when_dac_is_absent(self):
+        self.assertIsNone(choose_audio_device(["ALSA Default"], "usb"))
+
+class EqualizerTests(unittest.TestCase):
+    def test_presets_and_custom_gains_are_bounded(self):
+        self.assertEqual(preset_gains("Bass Boost"), (5, 0, 0))
+        self.assertEqual(preset_gains("Custom", (20, -20, 2)), (6, -6, 2))
+
+    def test_flat_does_not_install_audio_callback(self):
+        runtime = mock.Mock(Mix_SetPostMix=mock.Mock())
+        settings = mock.Mock()
+        values = {"eq_preset": "Flat", "eq_bass": 0, "eq_mid": 0, "eq_treble": 0}
+        settings.get.side_effect = values.get
+        settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        equalizer = Equalizer(runtime, settings)
+        self.assertTrue(equalizer.sync())
+        self.assertFalse(equalizer.installed)
+        runtime.Mix_SetPostMix.assert_not_called()
+
+    def test_non_flat_installs_and_processes_pcm(self):
+        runtime = mock.Mock(Mix_SetPostMix=mock.Mock())
+        settings = mock.Mock()
+        values = {"eq_preset": "Rock", "eq_bass": 0, "eq_mid": 0, "eq_treble": 0}
+        settings.get.side_effect = values.get
+        settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        equalizer = Equalizer(runtime, settings)
+        self.assertTrue(equalizer.sync())
+        self.assertTrue(equalizer.installed)
+        source = (b"\x00\x10\x00\x10") * 128
+        output = equalizer.process(source)
+        self.assertEqual(len(output), len(source))
+        self.assertNotEqual(output, source)
+
+    def test_custom_adjustment_inherits_active_preset(self):
+        runtime = mock.Mock(Mix_SetPostMix=mock.Mock())
+        settings = mock.Mock()
+        values = {"eq_preset": "Rock", "eq_bass": 0, "eq_mid": 0, "eq_treble": 0}
+        settings.get.side_effect = values.get
+        settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        equalizer = Equalizer(runtime, settings)
+        equalizer.adjust("mid", 1)
+        self.assertEqual(equalizer.preset, "Custom")
+        self.assertEqual(equalizer.gains, (4, 2, 3))
 
 class CollectionTests(unittest.TestCase):
     def test_favorites_and_folder_playlists_persist(self):
@@ -185,7 +253,39 @@ class UpdaterTests(unittest.TestCase):
 
 class UiLogicTests(unittest.TestCase):
     def test_release_version_is_visible_in_header_format(self):
-        self.assertEqual("v%s" % APP_VERSION, "v1.1.1")
+        self.assertEqual("v%s" % APP_VERSION, "v1.2.0")
+
+    def test_equalizer_menu_changes_preset(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {
+            "eq_preset": "Flat", "eq_bass": 0, "eq_mid": 0, "eq_treble": 0,
+        }
+        settings = mock.Mock()
+        settings.get.side_effect = values.get
+        settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        runtime = mock.Mock(Mix_SetPostMix=mock.Mock())
+        app.player = mock.Mock(equalizer=Equalizer(runtime, settings))
+        app.status = ""
+        app.status_error = False
+
+        app._handle_equalizer_menu("eq_preset", "right")
+        self.assertEqual(app.player.equalizer.preset, "Bass Boost")
+        self.assertEqual(app.player.equalizer.gains, (5, 0, 0))
+        self.assertFalse(app.status_error)
+
+    def test_audio_output_change_is_saved_for_next_launch(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"audio_output": "auto"}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.status = ""
+        app.status_error = False
+
+        app._cycle_audio_output(1)
+        self.assertEqual(values["audio_output"], "system")
+        app.settings.save.assert_called_once()
+        self.assertIn("next launch", app.status)
 
     def test_select_opens_quick_menu_without_sending_diagnostics(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
@@ -205,12 +305,18 @@ class UiLogicTests(unittest.TestCase):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
         app.update_manifest = None
         app.quick_menu = True
-        app.quick_menu_selection = 1
+        app.quick_menu_page = "main"
         app.sleep_timer = SleepTimer(clock=lambda: 100.0)
         app.player = mock.Mock(current=mock.Mock(path="/music/song.mp3"))
+        app.player.equalizer.preset = "Flat"
+        app.settings = mock.Mock()
+        app.settings.get.return_value = "auto"
         app.status = ""
         app.status_error = False
 
+        app.quick_menu_selection = next(
+            index for index, entry in enumerate(app._quick_menu_entries()) if entry[0] == "sleep"
+        )
         app._handle_quick_menu("a")
         self.assertEqual(app.sleep_timer.label, "15 min")
         self.assertTrue(app.quick_menu)

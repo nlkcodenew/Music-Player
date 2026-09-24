@@ -1,0 +1,29 @@
+SDL2_mixer
+============
+
+The bundled aarch64 SDL2_mixer runtime is distributed under the zlib license:
+
+Copyright (C) 1997-2023 Sam Lantinga <slouken@libsdl.org>
+
+This software is provided 'as-is', without any express or implied warranty. In
+no event will the authors be held liable for any damages arising from the use
+of this software.
+
+Permission is granted to anyone to use this software for any purpose, including
+commercial applications, and to alter it and redistribute it freely, subject
+to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not claim
+   that you wrote the original software. If you use this software in a product,
+   an acknowledgment in the product documentation would be appreciated but is
+   not required.
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+SDL2_mixer includes single-file decoders and other codec components. Their
+license notices are available in the SDL2_mixer source distribution:
+https://github.com/libsdl-org/SDL_mixer/tree/release-2.6.3
+
+The bundled dr_flac decoder is dual-licensed as public domain or MIT-0. Its
+license text is included in SDL2_mixer's `src/codecs/dr_libs` source directory.

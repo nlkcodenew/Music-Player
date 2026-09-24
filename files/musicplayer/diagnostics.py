@@ -28,11 +28,11 @@ def library_directories(paths):
 
 def library_candidates(paths, names):
     candidates = []
+    for directory in library_directories(paths):
+        candidates.extend(os.path.join(directory, name) for name in names[1:])
     found = ctypes.util.find_library(names[0])
     if found:
         candidates.append(found)
-    for directory in library_directories(paths):
-        candidates.extend(os.path.join(directory, name) for name in names[1:])
     candidates.extend(names[1:])
     result = []
     for candidate in candidates:
@@ -82,4 +82,3 @@ def write_diagnostics(paths, report):
         json.dump(report, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     return output
-

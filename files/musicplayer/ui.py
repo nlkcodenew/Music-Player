@@ -3,6 +3,7 @@ import threading
 
 from . import APP_VERSION
 from .audio import AudioPlayer
+from .audio_output import OUTPUT_MODES, output_mode_label
 from .collections import Collections
 from .display import DisplayController
 from .input import InputState
@@ -68,6 +69,7 @@ class MusicPlayerApp:
         self.active_playlist = ""
         self.quick_menu = False
         self.quick_menu_selection = 0
+        self.quick_menu_page = "main"
         self.sleep_timer = SleepTimer()
         self.display = DisplayController(paths)
         self.lyrics_cache = {}
@@ -105,6 +107,9 @@ class MusicPlayerApp:
         self._load_fonts()
         self.player = AudioPlayer(self.runtime, self.tracks, self.settings)
         self.player.initialize()
+        if self.player.output_warning:
+            self.status = self.player.output_warning
+            self.status_error = True
         self._restore_selection()
         if self.settings.get("auto_update"):
             threading.Thread(target=self._check_update, name="ota-check", daemon=True).start()
@@ -263,6 +268,7 @@ class MusicPlayerApp:
         if action == "select":
             self.quick_menu = True
             self.quick_menu_selection = 0
+            self.quick_menu_page = "main"
             return
         if action == "start":
             self.screen = "playing" if self.screen == "library" else "library"
@@ -343,8 +349,22 @@ class MusicPlayerApp:
                 self.player.seek(10)
 
     def _quick_menu_entries(self):
+        if getattr(self, "quick_menu_page", "main") == "equalizer":
+            bass, mid, treble = self.player.equalizer.gains
+            return [
+                ("eq_preset", "Preset: %s" % self.player.equalizer.preset),
+                ("eq_bass", "Bass: %+d dB" % bass),
+                ("eq_mid", "Mid: %+d dB" % mid),
+                ("eq_treble", "Treble: %+d dB" % treble),
+                ("eq_back", "Back"),
+            ]
         entries = [
             ("lyrics", "Lyrics"),
+            ("equalizer", "Equalizer: %s" % self.player.equalizer.preset),
+            (
+                "audio_output",
+                "Audio Output: %s" % output_mode_label(self.settings.get("audio_output")),
+            ),
             ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
             ("screen_off", "Screen-off Playback"),
         ]
@@ -355,8 +375,15 @@ class MusicPlayerApp:
 
     def _handle_quick_menu(self, action):
         entries = self._quick_menu_entries()
-        if action in ("b", "select"):
+        if action == "select":
             self.quick_menu = False
+            return
+        if action == "b":
+            if getattr(self, "quick_menu_page", "main") == "equalizer":
+                self.quick_menu_page = "main"
+                self.quick_menu_selection = 1
+            else:
+                self.quick_menu = False
             return
         if action == "up":
             self.quick_menu_selection = (self.quick_menu_selection - 1) % len(entries)
@@ -365,8 +392,14 @@ class MusicPlayerApp:
             self.quick_menu_selection = (self.quick_menu_selection + 1) % len(entries)
             return
         selected = entries[self.quick_menu_selection][0]
+        if getattr(self, "quick_menu_page", "main") == "equalizer":
+            self._handle_equalizer_menu(selected, action)
+            return
         if selected == "sleep" and action in ("left", "right"):
             self._cycle_sleep_timer(-1 if action == "left" else 1)
+            return
+        if selected == "audio_output" and action in ("left", "right"):
+            self._cycle_audio_output(-1 if action == "left" else 1)
             return
         if action != "a":
             return
@@ -378,6 +411,11 @@ class MusicPlayerApp:
                 self.screen = "lyrics"
                 self.status = ""
             self.quick_menu = False
+        elif selected == "equalizer":
+            self.quick_menu_page = "equalizer"
+            self.quick_menu_selection = 0
+        elif selected == "audio_output":
+            self._cycle_audio_output(1)
         elif selected == "sleep":
             self._cycle_sleep_timer(1)
         elif selected == "screen_off":
@@ -396,6 +434,40 @@ class MusicPlayerApp:
             self._send_diagnostic()
         else:
             self.quick_menu = False
+
+    def _handle_equalizer_menu(self, selected, action):
+        step = -1 if action == "left" else 1
+        if selected == "eq_back" and action == "a":
+            self.quick_menu_page = "main"
+            self.quick_menu_selection = 1
+            return
+        if action not in ("a", "left", "right"):
+            return
+        equalizer = self.player.equalizer
+        if selected == "eq_preset":
+            preset = equalizer.cycle_preset(step)
+            self.status = "Equalizer: %s" % preset
+        elif selected.startswith("eq_"):
+            band = selected[3:]
+            value = equalizer.adjust(band, step)
+            self.status = "%s: %+d dB" % (band.title(), value)
+        else:
+            return
+        self.status_error = False
+        if equalizer.gains != (0, 0, 0) and not equalizer.installed:
+            self.status = "Equalizer unavailable on this firmware runtime"
+            self.status_error = True
+        get_logger().info("equalizer preset=%s gains=%s", equalizer.preset, equalizer.gains)
+
+    def _cycle_audio_output(self, step):
+        current = self.settings.get("audio_output")
+        index = OUTPUT_MODES.index(current) if current in OUTPUT_MODES else 0
+        mode = OUTPUT_MODES[(index + step) % len(OUTPUT_MODES)]
+        self.settings.set("audio_output", mode)
+        self.settings.save()
+        self.status = "Audio Output: %s (applies next launch)" % output_mode_label(mode)
+        self.status_error = False
+        get_logger().info("audio output preference=%s", mode)
 
     def _cycle_sleep_timer(self, step):
         track = self.player.current
@@ -550,7 +622,10 @@ class MusicPlayerApp:
         self.text(title, 28, 15, "title")
         title_width = self.measure(title, "title")[0]
         self.text("v%s" % APP_VERSION, 44 + title_width, 24, "small", self.ACCENT)
-        subtitle = "%s | %d tracks" % (self.paths.os_name.upper(), len(self._library_tracks()))
+        output = "USB DAC" if self.player.output_device != "System / Bluetooth" else "SYSTEM/BT"
+        subtitle = "%s | %d tracks | %s" % (
+            self.paths.os_name.upper(), len(self._library_tracks()), output,
+        )
         subtitle_width = self.measure(subtitle, "small")[0]
         self.text(subtitle, self.width - 28 - subtitle_width, 23, "small", self.MUTED)
         if self.screen == "library":
@@ -670,7 +745,8 @@ class MusicPlayerApp:
         y = (self.height - height) // 2
         self.fill(x - 4, y - 4, width + 8, height + 8, self.ACCENT)
         self.fill(x, y, width, height, self.PANEL)
-        self.text("QUICK MENU", self.width // 2, y + 28, "title", center=True)
+        title = "EQUALIZER" if getattr(self, "quick_menu_page", "main") == "equalizer" else "QUICK MENU"
+        self.text(title, self.width // 2, y + 28, "title", center=True)
         for index, (_, label) in enumerate(entries):
             row_y = y + 86 + index * 58
             selected = index == self.quick_menu_selection

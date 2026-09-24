@@ -142,6 +142,8 @@ class SDLRuntime:
         self.SDL_Quit = _bind(sdl, "SDL_Quit", [], None)
         self.SDL_GetError = _bind(sdl, "SDL_GetError", [], c_char_p)
         self.SDL_GetCurrentDisplayMode = _bind(sdl, "SDL_GetCurrentDisplayMode", [c_int, POINTER(SDL_DisplayMode)])
+        self.SDL_GetNumAudioDevices = _bind(sdl, "SDL_GetNumAudioDevices", [c_int], required=False)
+        self.SDL_GetAudioDeviceName = _bind(sdl, "SDL_GetAudioDeviceName", [c_int, c_int], c_char_p, required=False)
         self.SDL_CreateWindow = _bind(sdl, "SDL_CreateWindow", [c_char_p, c_int, c_int, c_int, c_int, c_uint32], c_void_p)
         self.SDL_DestroyWindow = _bind(sdl, "SDL_DestroyWindow", [c_void_p], None)
         self.SDL_CreateRenderer = _bind(sdl, "SDL_CreateRenderer", [c_void_p, c_int, c_uint32], c_void_p)
@@ -173,6 +175,10 @@ class SDLRuntime:
         self.Mix_Init = _bind(self.mixer, "Mix_Init", [c_int], required=False)
         self.Mix_Quit = _bind(self.mixer, "Mix_Quit", [], None, required=False)
         self.Mix_OpenAudio = _bind(self.mixer, "Mix_OpenAudio", [c_int, c_uint16, c_int, c_int])
+        self.Mix_OpenAudioDevice = _bind(
+            self.mixer, "Mix_OpenAudioDevice",
+            [c_int, c_uint16, c_int, c_int, c_char_p, c_int], required=False,
+        )
         self.Mix_CloseAudio = _bind(self.mixer, "Mix_CloseAudio", [], None)
         self.Mix_LoadMUS = _bind(self.mixer, "Mix_LoadMUS", [c_char_p], c_void_p)
         self.Mix_FreeMusic = _bind(self.mixer, "Mix_FreeMusic", [c_void_p], None)
@@ -186,6 +192,9 @@ class SDLRuntime:
         self.Mix_SetMusicPosition = _bind(self.mixer, "Mix_SetMusicPosition", [c_double], required=False)
         self.Mix_GetMusicPosition = _bind(self.mixer, "Mix_GetMusicPosition", [c_void_p], c_double, required=False)
         self.Mix_MusicDuration = _bind(self.mixer, "Mix_MusicDuration", [c_void_p], c_double, required=False)
+        self.Mix_SetPostMix = _bind(
+            self.mixer, "Mix_SetPostMix", [c_void_p, c_void_p], None, required=False
+        )
 
     def error(self):
         value = self.SDL_GetError()
@@ -210,6 +219,18 @@ class SDLRuntime:
         self.controllers = []
         self.joysticks = []
 
+    def audio_devices(self):
+        if not self.SDL_GetNumAudioDevices or not self.SDL_GetAudioDeviceName:
+            return []
+        devices = []
+        for index in range(max(0, self.SDL_GetNumAudioDevices(0))):
+            value = self.SDL_GetAudioDeviceName(index, 0)
+            if value:
+                name = value.decode("utf-8", "replace")
+                if name not in devices:
+                    devices.append(name)
+        return devices
+
 
 def font_candidates(paths):
     candidates = [
@@ -222,4 +243,3 @@ def font_candidates(paths):
     ]
     candidates.extend(glob.glob("/usr/trimui/res/*.ttf"))
     return [candidate for candidate in candidates if os.path.isfile(candidate)]
-

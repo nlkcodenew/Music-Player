@@ -31,6 +31,8 @@ def verify_archive(path, package_root, manifest):
             "%s/LICENSE.txt" % package_root,
             "%s/certs/cacert.pem" % package_root,
             "%s/musicplayer/ui.py" % package_root,
+            "%s/libs/libSDL2_mixer-2.0.so" % package_root,
+            "%s/THIRD_PARTY_NOTICES.txt" % package_root,
         }
         missing = required - names
         if missing:
@@ -47,6 +49,13 @@ def verify_archive(path, package_root, manifest):
         launcher = "%s/launch.sh" % package_root
         if not archive.getinfo(launcher).external_attr >> 16 & stat.S_IXUSR:
             raise SystemExit("not executable: %s" % launcher)
+        mixer = archive.read("%s/libs/libSDL2_mixer-2.0.so" % package_root)
+        if not mixer.startswith(b"\x7fELF") or mixer[4] != 2 or mixer[5] != 1:
+            raise SystemExit("bundled SDL2_mixer is not a 64-bit little-endian ELF")
+        if int.from_bytes(mixer[18:20], "little") != 183:
+            raise SystemExit("bundled SDL2_mixer is not built for AArch64")
+        if b"DRFLAC" not in mixer or b"Mix_SetPostMix" not in mixer:
+            raise SystemExit("bundled SDL2_mixer lacks FLAC or post-mix support")
         for item in manifest["files"]:
             name = "%s/%s" % (package_root, item["path"])
             if name not in names:

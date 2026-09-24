@@ -1,6 +1,8 @@
 import random
 import time
 
+from .audio_output import choose_audio_device
+from .equalizer import Equalizer
 from .logger import get_logger
 from .sdl_runtime import (
     AUDIO_S16SYS,
@@ -24,18 +26,56 @@ class AudioPlayer:
         self.position_base = 0.0
         self.paused_at = 0.0
         self.error = ""
+        self.output_device = "System / Bluetooth"
+        self.available_decoders = 0
+        self.equalizer = Equalizer(runtime, settings)
+        self.output_warning = ""
 
     def initialize(self):
         flags = MIX_INIT_FLAC | MIX_INIT_MP3 | MIX_INIT_OGG | MIX_INIT_OPUS
         if self.runtime.Mix_Init:
-            available = self.runtime.Mix_Init(flags)
-            get_logger().info("SDL_mixer decoders requested=0x%x available=0x%x", flags, available)
-        if self.runtime.Mix_OpenAudio(48000, AUDIO_S16SYS, 2, 2048) != 0:
+            self.available_decoders = self.runtime.Mix_Init(flags)
+            get_logger().info(
+                "SDL_mixer decoders requested=0x%x available=0x%x",
+                flags, self.available_decoders,
+            )
+            if not self.available_decoders & MIX_INIT_FLAC:
+                self.output_warning = "FLAC decoder unavailable; other formats still work"
+        devices = self.runtime.audio_devices()
+        selected = choose_audio_device(devices, self.settings.get("audio_output"))
+        if self.settings.get("audio_output") == "usb" and not selected:
+            self.output_warning = "USB DAC not detected; using system audio"
+        result = -1
+        if selected and self.runtime.Mix_OpenAudioDevice:
+            result = self.runtime.Mix_OpenAudioDevice(
+                48000, AUDIO_S16SYS, 2, 4096, selected.encode("utf-8"), 0
+            )
+            if result == 0:
+                self.output_device = selected
+            else:
+                self.output_warning = "USB DAC could not open; using system audio"
+                get_logger().warning(
+                    "cannot open selected audio device; falling back: %s", self.runtime.error()
+                )
+        if result != 0:
+            result = self.runtime.Mix_OpenAudio(48000, AUDIO_S16SYS, 2, 4096)
+        if result != 0:
             raise RuntimeError("cannot open audio: %s" % self.runtime.error())
+        get_logger().info(
+            "audio output=%s mode=%s devices=%s",
+            self.output_device, self.settings.get("audio_output"), devices,
+        )
+        if self.equalizer.sync():
+            get_logger().info(
+                "equalizer preset=%s active=%s", self.equalizer.preset, self.equalizer.installed
+            )
+        else:
+            get_logger().warning("equalizer unavailable on this Python/SDL_mixer runtime")
         self.set_volume(int(self.settings.get("volume")))
 
     def close(self):
         self.stop()
+        self.equalizer.uninstall()
         self.runtime.Mix_CloseAudio()
         if self.runtime.Mix_Quit:
             self.runtime.Mix_Quit()

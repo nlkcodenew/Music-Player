@@ -11,6 +11,11 @@ DEFAULTS = {
     "auto_update": True,
     "skipped_version": "",
     "lyrics_language": "",
+    "eq_preset": "Flat",
+    "eq_bass": 0,
+    "eq_mid": 0,
+    "eq_treble": 0,
+    "audio_output": "auto",
 }
 
 
@@ -49,6 +54,14 @@ class Settings:
         self.values["shuffle"] = bool(self.values.get("shuffle"))
         self.values["auto_update"] = bool(self.values.get("auto_update"))
         self.values["lyrics_language"] = str(self.values.get("lyrics_language", ""))
+        if self.values.get("eq_preset") not in (
+            "Flat", "Bass Boost", "Vocal", "Rock", "Pop", "Classical", "Jazz", "Custom",
+        ):
+            self.values["eq_preset"] = "Flat"
+        for key in ("eq_bass", "eq_mid", "eq_treble"):
+            self.values[key] = max(-6, min(6, int(self.values.get(key, 0))))
+        if self.values.get("audio_output") not in ("auto", "system", "usb"):
+            self.values["audio_output"] = "auto"
         return self
 
     def save(self):

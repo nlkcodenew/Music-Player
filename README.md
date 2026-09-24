@@ -4,7 +4,7 @@ Music Player is a self-contained music player for TrimUI Brick Pro Stock OS and
 Spruce OS. It does not require NextUI libraries or place a hidden application
 directory at the SD-card root.
 
-## Version 1.1.1
+## Version 1.2.0
 
 - Detect Stock OS and Spruce OS at runtime.
 - Scan the SD card recursively for WAV, MP3, OGG, FLAC and OPUS files.
@@ -13,22 +13,25 @@ directory at the SD-card root.
 - Stop after a preset time or at the end of the current track with Sleep Timer.
 - Turn off the Brick Pro display while playback continues, then wake on any input.
 - Show the installed version beside every main screen title.
+- Apply a three-band Equalizer with presets before speaker, Bluetooth or USB output.
+- Prefer a connected USB Audio DAC in Auto mode and fall back to system audio.
+- Bundle a consistent AArch64 SDL2_mixer runtime with FLAC decoding.
 - Persist volume, shuffle, repeat and the last selected track.
 - Rotate local logs and preserve pending error reports.
 - Create deduplicated GitHub Issues when an Issues-only token is configured.
 - Update in place over verified TLS with SHA-256 validation and atomic writes.
 - Keep the complete application in one visible menu directory.
 
-AAC/M4A, album art, online lyrics/translation, radio, podcasts, EQ and crossfade
-are not included. Screen-off Playback keeps music running while this app remains
-open; it is not a background service after launching another application.
+AAC/M4A, album art, online lyrics/translation, radio, podcasts and crossfade are
+not included. Screen-off Playback keeps music running while this app remains open;
+it is not a background service after launching another application.
 
 ## Install
 
 Download exactly one package from the GitHub release:
 
-- Stock OS: `trimui-music-player-v1.1.1-stock.zip`
-- Spruce OS: `trimui-music-player-v1.1.1-spruce.zip`
+- Stock OS: `trimui-music-player-v1.2.0-stock.zip`
+- Spruce OS: `trimui-music-player-v1.2.0-spruce.zip`
 
 Extract the selected ZIP directly to the SD-card root. Do not copy files between
 folders manually.
@@ -83,10 +86,39 @@ To exit, press **B** in Library, then **A** to confirm. Press **B** again to
 cancel. The footer displays the controls for the current screen.
 
 Quick Menu provides Lyrics, Sleep Timer, Screen-off Playback, diagnostics and
-OTA installation. Use Up/Down to select, A to activate, B or Select to close.
+OTA installation. It also provides Equalizer and Audio Output. Use Up/Down to
+select, A to activate, B or Select to close.
 On Sleep Timer, Left/Right or A cycles Off, 15, 30, 45, 60, 90 minutes and End
 of track. Any controller input wakes the screen without also triggering an app
 action.
+
+## Equalizer
+
+Open `Select > Equalizer`. Presets include Flat, Bass Boost, Vocal, Rock, Pop,
+Classical and Jazz. Bass, Mid and Treble can each be adjusted from `-6 dB` to
+`+6 dB`; changing an individual band selects Custom. Automatic headroom reduces
+clipping when a band is boosted. Flat bypasses the DSP callback completely.
+
+EQ is applied before the selected output, so it works with the built-in speaker,
+wired headphones, Bluetooth A2DP and USB DAC devices. Bluetooth audio is encoded
+again by A2DP and should not be described as lossless.
+
+## FLAC And USB DAC
+
+FLAC is decoded locally without lossy transcoding. The current playback pipeline
+outputs stereo PCM at 16-bit/48 kHz for broad Stock OS, Spruce OS, Bluetooth and
+USB Audio compatibility. This release therefore does not claim bit-perfect or
+native high-resolution output, even when the source FLAC or DAC supports it.
+
+Audio Output modes are available in Quick Menu:
+
+- `Auto`: prefer a detected USB/DAC device; otherwise use system audio.
+- `System / Bluetooth`: use the OS default, including Spruce BlueALSA A2DP.
+- `USB DAC`: request a detected USB/DAC device and fall back safely if absent.
+
+Connect and power the USB DAC or Bluetooth device before opening Music Player.
+Output changes are saved and applied on the next app launch. If a DAC is removed
+during playback, close and reopen the app to restore the system output safely.
 
 ## Lyrics
 
