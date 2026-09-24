@@ -1,6 +1,7 @@
 import ctypes
 import threading
 
+from . import APP_VERSION
 from .audio import AudioPlayer
 from .collections import Collections
 from .display import DisplayController
@@ -545,7 +546,10 @@ class MusicPlayerApp:
         self.runtime.SDL_RenderClear(self.renderer)
         self.fill(0, 0, self.width, 68, self.PANEL)
         self.fill(0, 66, self.width, 2, self.ACCENT)
-        self.text(self._screen_title(), 28, 15, "title")
+        title = self._screen_title()
+        self.text(title, 28, 15, "title")
+        title_width = self.measure(title, "title")[0]
+        self.text("v%s" % APP_VERSION, 44 + title_width, 24, "small", self.ACCENT)
         subtitle = "%s | %d tracks" % (self.paths.os_name.upper(), len(self._library_tracks()))
         subtitle_width = self.measure(subtitle, "small")[0]
         self.text(subtitle, self.width - 28 - subtitle_width, 23, "small", self.MUTED)

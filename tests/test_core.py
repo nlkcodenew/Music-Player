@@ -11,6 +11,7 @@ FILES = os.path.join(ROOT, "files")
 sys.path.insert(0, FILES)
 
 from musicplayer.audio import AudioPlayer
+from musicplayer import APP_VERSION
 from musicplayer.collections import Collections
 from musicplayer.display import DisplayController
 from musicplayer.library import natural_key, scan_library
@@ -183,6 +184,9 @@ class UpdaterTests(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(root, "App", "MusicPlayer")))
 
 class UiLogicTests(unittest.TestCase):
+    def test_release_version_is_visible_in_header_format(self):
+        self.assertEqual("v%s" % APP_VERSION, "v1.1.1")
+
     def test_select_opens_quick_menu_without_sending_diagnostics(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
         app.update_busy = False
