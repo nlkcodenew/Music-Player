@@ -91,8 +91,8 @@
     },
     {
       "path": "certs/cacert.pem",
-      "sha256": "303daa9461b9617eb8e6209b272613fcf2923959ff32e9422eaaae195c55c780",
-      "size": 191850,
+      "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9",
+      "size": 188900,
       "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.0.0/assets/cacert.pem"
     },
     {
