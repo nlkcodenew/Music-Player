@@ -30,6 +30,8 @@ MIX_INIT_FLAC = 0x00000001
 MIX_INIT_MP3 = 0x00000008
 MIX_INIT_OGG = 0x00000010
 MIX_INIT_OPUS = 0x00000040
+SDL_AUDIO_ALLOW_FREQUENCY_CHANGE = 0x00000001
+SDL_AUDIO_ALLOW_SAMPLES_CHANGE = 0x00000008
 
 
 class SDL_Rect(Structure):
@@ -179,6 +181,10 @@ class SDLRuntime:
             self.mixer, "Mix_OpenAudioDevice",
             [c_int, c_uint16, c_int, c_int, c_char_p, c_int], required=False,
         )
+        self.Mix_QuerySpec = _bind(
+            self.mixer, "Mix_QuerySpec",
+            [POINTER(c_int), POINTER(c_uint16), POINTER(c_int)], required=False,
+        )
         self.Mix_CloseAudio = _bind(self.mixer, "Mix_CloseAudio", [], None)
         self.Mix_LoadMUS = _bind(self.mixer, "Mix_LoadMUS", [c_char_p], c_void_p)
         self.Mix_FreeMusic = _bind(self.mixer, "Mix_FreeMusic", [c_void_p], None)
@@ -230,6 +236,18 @@ class SDLRuntime:
                 if name not in devices:
                     devices.append(name)
         return devices
+
+    def mixer_spec(self):
+        if not self.Mix_QuerySpec:
+            return None
+        frequency = c_int()
+        audio_format = c_uint16()
+        channels = c_int()
+        if not self.Mix_QuerySpec(
+            ctypes.byref(frequency), ctypes.byref(audio_format), ctypes.byref(channels)
+        ):
+            return None
+        return frequency.value, audio_format.value, channels.value
 
 
 def font_candidates(paths):

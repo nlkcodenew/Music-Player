@@ -4,7 +4,7 @@ Music Player is a self-contained music player for TrimUI Brick Pro Stock OS and
 Spruce OS. It does not require NextUI libraries or place a hidden application
 directory at the SD-card root.
 
-## Version 1.2.0
+## Version 1.2.1
 
 - Detect Stock OS and Spruce OS at runtime.
 - Scan the SD card recursively for WAV, MP3, OGG, FLAC and OPUS files.
@@ -16,6 +16,7 @@ directory at the SD-card root.
 - Apply a three-band Equalizer with presets before speaker, Bluetooth or USB output.
 - Prefer a connected USB Audio DAC in Auto mode and fall back to system audio.
 - Bundle a consistent AArch64 SDL2_mixer runtime with FLAC decoding.
+- Negotiate Bluetooth/BlueALSA sample rates and keep the UI open if audio is unavailable.
 - Persist volume, shuffle, repeat and the last selected track.
 - Rotate local logs and preserve pending error reports.
 - Create deduplicated GitHub Issues when an Issues-only token is configured.
@@ -30,8 +31,8 @@ it is not a background service after launching another application.
 
 Download exactly one package from the GitHub release:
 
-- Stock OS: `trimui-music-player-v1.2.0-stock.zip`
-- Spruce OS: `trimui-music-player-v1.2.0-spruce.zip`
+- Stock OS: `trimui-music-player-v1.2.1-stock.zip`
+- Spruce OS: `trimui-music-player-v1.2.1-spruce.zip`
 
 Extract the selected ZIP directly to the SD-card root. Do not copy files between
 folders manually.

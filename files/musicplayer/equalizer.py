@@ -43,6 +43,7 @@ class Equalizer:
         self.low_state = None
         self.mid_state = None
         self.errors = 0
+        self.sample_rate = 48000
 
     @property
     def available(self):
@@ -92,6 +93,15 @@ class Equalizer:
         self.low_state = None
         self.mid_state = None
 
+    def set_sample_rate(self, sample_rate):
+        self.sample_rate = max(8000, int(sample_rate))
+        self.reset()
+
+    def _filter_weights(self, frequency):
+        alpha = 1.0 - math.exp(-2.0 * math.pi * frequency / self.sample_rate)
+        weight_a = max(1, min(999, round(alpha * 1000)))
+        return weight_a, 1000 - weight_a
+
     def sync(self):
         self.reset()
         if self.gains == (0, 0, 0):
@@ -133,11 +143,15 @@ class Equalizer:
         bass_db, mid_db, treble_db = self.gains
         if not source or (bass_db, mid_db, treble_db) == (0, 0, 0):
             return source
+        low_weights = self._filter_weights(250)
+        mid_weights = self._filter_weights(4000)
         low, self.low_state = audioop.ratecv(
-            source, 2, 2, 48000, 48000, self.low_state, 32, 968
+            source, 2, 2, self.sample_rate, self.sample_rate,
+            self.low_state, low_weights[0], low_weights[1],
         )
         low_mid, self.mid_state = audioop.ratecv(
-            source, 2, 2, 48000, 48000, self.mid_state, 408, 592
+            source, 2, 2, self.sample_rate, self.sample_rate,
+            self.mid_state, mid_weights[0], mid_weights[1],
         )
         mid = audioop.add(low_mid, audioop.mul(low, 2, -1.0), 2)
         treble = audioop.add(source, audioop.mul(low_mid, 2, -1.0), 2)

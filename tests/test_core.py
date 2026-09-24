@@ -253,7 +253,7 @@ class UpdaterTests(unittest.TestCase):
 
 class UiLogicTests(unittest.TestCase):
     def test_release_version_is_visible_in_header_format(self):
-        self.assertEqual("v%s" % APP_VERSION, "v1.2.0")
+        self.assertEqual("v%s" % APP_VERSION, "v1.2.1")
 
     def test_equalizer_menu_changes_preset(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
@@ -463,8 +463,65 @@ class FakeRuntime:
     def Mix_ResumeMusic(self):
         self.paused = False
 
+class FakeAudioRuntime(FakeRuntime):
+    def __init__(self, results):
+        super().__init__()
+        self.results = list(results)
+        self.attempts = []
+        self.Mix_Init = lambda flags: flags
+        self.Mix_OpenAudioDevice = self.open_audio_device
+        self.Mix_SetPostMix = None
+        self.Mix_Quit = None
+
+    def audio_devices(self):
+        return []
+
+    def open_audio_device(self, frequency, audio_format, channels, buffer_size, device, changes):
+        self.attempts.append((frequency, buffer_size, device, changes))
+        return self.results.pop(0) if self.results else -1
+
+    def Mix_OpenAudio(self, frequency, audio_format, channels, buffer_size):
+        raise AssertionError("Mix_OpenAudioDevice should be preferred")
+
+    def mixer_spec(self):
+        return (44100, 0x8010, 2)
+
+    def error(self):
+        return "Operation not permitted"
+
+    def Mix_CloseAudio(self):
+        self.closed = True
+
 
 class AudioLogicTests(unittest.TestCase):
+    @staticmethod
+    def audio_settings():
+        values = {
+            "volume": 80, "audio_output": "system", "eq_preset": "Flat",
+            "eq_bass": 0, "eq_mid": 0, "eq_treble": 0,
+        }
+        settings = mock.Mock()
+        settings.get.side_effect = values.get
+        settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        return settings
+
+    def test_audio_negotiation_uses_next_configuration(self):
+        runtime = FakeAudioRuntime([-1, 0])
+        player = AudioPlayer(runtime, [], self.audio_settings())
+        self.assertTrue(player.initialize())
+        self.assertTrue(player.audio_ready)
+        self.assertEqual([attempt[:2] for attempt in runtime.attempts], [(44100, 1024), (48000, 1024)])
+        self.assertEqual(player.sample_rate, 44100)
+        self.assertEqual(player.equalizer.sample_rate, 44100)
+
+    def test_audio_failure_does_not_raise_or_block_ui_startup(self):
+        runtime = FakeAudioRuntime([-1] * 10)
+        player = AudioPlayer(runtime, [], self.audio_settings())
+        self.assertFalse(player.initialize())
+        self.assertFalse(player.audio_ready)
+        self.assertIn("Audio unavailable", player.output_warning)
+        self.assertFalse(player.play(0))
+
     def test_pause_and_resume(self):
         runtime = FakeRuntime()
         player = AudioPlayer(runtime, [], mock.Mock())

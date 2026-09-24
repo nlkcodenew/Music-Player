@@ -622,7 +622,10 @@ class MusicPlayerApp:
         self.text(title, 28, 15, "title")
         title_width = self.measure(title, "title")[0]
         self.text("v%s" % APP_VERSION, 44 + title_width, 24, "small", self.ACCENT)
-        output = "USB DAC" if self.player.output_device != "System / Bluetooth" else "SYSTEM/BT"
+        if not self.player.audio_ready:
+            output = "AUDIO OFF"
+        else:
+            output = "USB DAC" if self.player.output_device != "System / Bluetooth" else "SYSTEM/BT"
         subtitle = "%s | %d tracks | %s" % (
             self.paths.os_name.upper(), len(self._library_tracks()), output,
         )
