@@ -12,10 +12,13 @@ sys.path.insert(0, FILES)
 
 from musicplayer.audio import AudioPlayer
 from musicplayer.collections import Collections
+from musicplayer.display import DisplayController
 from musicplayer.library import natural_key, scan_library
+from musicplayer.lyrics import load_lyrics, parse_lrc
 from musicplayer.paths import RuntimePaths, detect_os
 from musicplayer.reporter import _redact, queue_report
 from musicplayer.settings import Settings
+from musicplayer.sleep_timer import SleepTimer
 from musicplayer.updater import apply_update, update_available, validate_manifest, version_tuple
 from musicplayer.ui import MusicPlayerApp
 
@@ -142,8 +145,12 @@ class UpdaterTests(unittest.TestCase):
         base = {"version": "9.0", "base_url": "https://example.test/files"}
         for path in ("../escape", "/absolute", "secrets.json", "data/settings.json"):
             manifest = dict(base, files=[{"path": path, "sha256": "0" * 64, "size": 1}])
-            with self.assertRaises(ValueError):
-                validate_manifest(manifest)
+        with self.assertRaises(ValueError):
+            validate_manifest(manifest)
+
+        manifest["files"][0]["path"] = "data/display-restore.json"
+        with self.assertRaises(ValueError):
+            validate_manifest(manifest)
 
     def test_version_comparison(self):
         self.assertEqual(version_tuple("v1.10.2"), (1, 10, 2))
@@ -156,7 +163,7 @@ class UpdaterTests(unittest.TestCase):
             os.makedirs(data_dir)
             paths = mock.Mock(app_dir=app_dir, data_dir=data_dir)
             manifest = {
-                "version": "1.0.2",
+                "version": "1.1.0",
                 "base_url": "https://example.test/files",
                 "files": [{"path": "config.json", "sha256": "0" * 64, "size": 3}],
             }
@@ -176,6 +183,34 @@ class UpdaterTests(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(root, "App", "MusicPlayer")))
 
 class UiLogicTests(unittest.TestCase):
+    def test_select_opens_quick_menu_without_sending_diagnostics(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.update_busy = False
+        app.update_manifest = None
+        app.quick_menu = False
+        app.quick_menu_selection = 0
+        app.exit_confirmation = False
+        app.screen = "library"
+
+        with mock.patch.object(app, "_send_diagnostic") as send_diagnostic:
+            app._handle("select")
+        self.assertTrue(app.quick_menu)
+        send_diagnostic.assert_not_called()
+
+    def test_quick_menu_cycles_sleep_timer(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.update_manifest = None
+        app.quick_menu = True
+        app.quick_menu_selection = 1
+        app.sleep_timer = SleepTimer(clock=lambda: 100.0)
+        app.player = mock.Mock(current=mock.Mock(path="/music/song.mp3"))
+        app.status = ""
+        app.status_error = False
+
+        app._handle_quick_menu("a")
+        self.assertEqual(app.sleep_timer.label, "15 min")
+        self.assertTrue(app.quick_menu)
+
     def test_library_back_requires_exit_confirmation(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
         app.update_busy = False
@@ -223,6 +258,83 @@ class UiLogicTests(unittest.TestCase):
         app._cycle_library_mode()
         self.assertEqual(app.library_mode, "playlists")
         self.assertEqual(app._library_entries(), ["Album"])
+
+class LyricsTests(unittest.TestCase):
+    def test_parses_metadata_offset_duplicate_and_multiple_timestamps(self):
+        lines = parse_lrc(
+            "[ar:Artist]\n[offset:250]\n[00:01.00][00:02.5]Hello\n[00:01.00]Again\n"
+        )
+        self.assertEqual(
+            [(round(line.timestamp, 2), line.text) for line in lines],
+            [(1.25, "Hello"), (1.25, "Again"), (2.75, "Hello")],
+        )
+
+    def test_loads_translation_and_selects_current_line(self):
+        with tempfile.TemporaryDirectory() as root:
+            track = os.path.join(root, "Song.mp3")
+            with open(track, "wb") as handle:
+                handle.write(b"")
+            with open(os.path.join(root, "Song.lrc"), "w", encoding="utf-8") as handle:
+                handle.write("[00:01.00]One\n[00:04.00]Two\n")
+            with open(os.path.join(root, "Song.vi.lrc"), "w", encoding="utf-8") as handle:
+                handle.write("[00:01.00]Mot\n[00:04.00]Hai\n")
+            lyrics = load_lyrics(track)
+        self.assertEqual(lyrics.current_index(0.5), -1)
+        self.assertEqual(lyrics.current_index(4.2), 1)
+        self.assertEqual(lyrics.languages, ["vi"])
+        self.assertEqual(lyrics.translation(1, "vi"), "Hai")
+
+class SleepTimerTests(unittest.TestCase):
+    def test_countdown_expires_and_can_be_cancelled(self):
+        now = [100.0]
+        timer = SleepTimer(clock=lambda: now[0])
+        timer.set(1)
+        self.assertEqual(timer.remaining(), 900)
+        now[0] = 999.5
+        self.assertFalse(timer.expired())
+        now[0] = 1000.0
+        self.assertTrue(timer.expired())
+        timer.cancel()
+        self.assertFalse(timer.active)
+
+    def test_end_of_track_uses_the_track_active_when_set(self):
+        timer = SleepTimer()
+        timer.set(6, "/music/one.mp3")
+        self.assertFalse(timer.expired("/music/one.mp3", playing=True))
+        self.assertTrue(timer.expired("/music/two.mp3", playing=True))
+        self.assertTrue(timer.expired("/music/one.mp3", playing=False, paused=False))
+
+class DisplayTests(unittest.TestCase):
+    def test_screen_off_records_and_restores_exact_brightness(self):
+        with tempfile.TemporaryDirectory() as root:
+            recovery = os.path.join(root, "display-restore.json")
+            display = DisplayController(device_path="/dev/test", recovery_file=recovery)
+            calls = []
+            with mock.patch.object(
+                DisplayController, "supported", new_callable=mock.PropertyMock, return_value=True
+            ), mock.patch.object(
+                display, "_saved_brightness", return_value=87
+            ), mock.patch.object(
+                display, "_ioctl", side_effect=lambda command, value=0: calls.append(value) or True
+            ):
+                self.assertTrue(display.screen_off())
+                self.assertTrue(os.path.isfile(recovery))
+                self.assertTrue(display.restore())
+            self.assertEqual(calls, [0, 87])
+            self.assertFalse(os.path.exists(recovery))
+
+    def test_reads_stock_brightness_key(self):
+        display = DisplayController()
+        stock_path = "/mnt/UDISK/system.json"
+        real_open = open
+
+        def fake_open(path, *args, **kwargs):
+            if path == stock_path:
+                return mock.mock_open(read_data='{"brightness": 6}').return_value
+            raise FileNotFoundError(path)
+
+        with mock.patch("builtins.open", side_effect=fake_open):
+            self.assertEqual(display._saved_brightness(), 142)
 
 
 class FakeRuntime:

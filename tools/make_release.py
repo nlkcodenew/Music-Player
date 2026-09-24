@@ -20,7 +20,8 @@ PACKAGES = {
 TEXT_EXTENSIONS = {".json", ".md", ".pem", ".py", ".sh", ".txt"}
 EXCLUDED = {
     "secrets.json", "settings.json", "collections.json", "pending-reports.json", "identity.json",
-    "music-player.log", "music-player-stdio.log", "music-player-diagnostics.json",
+    "display-restore.json", "music-player.log", "music-player-stdio.log",
+    "music-player-diagnostics.json",
 }
 
 

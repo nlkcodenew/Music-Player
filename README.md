@@ -4,26 +4,30 @@ Music Player is a self-contained music player for TrimUI Brick Pro Stock OS and
 Spruce OS. It does not require NextUI libraries or place a hidden application
 directory at the SD-card root.
 
-## Version 1.0.2
+## Version 1.1.0
 
 - Detect Stock OS and Spruce OS at runtime.
 - Scan the SD card recursively for WAV, MP3, OGG, FLAC and OPUS files.
 - Play through the firmware SDL2_mixer with controller navigation.
+- Display synchronized offline LRC lyrics and optional translated LRC lines.
+- Stop after a preset time or at the end of the current track with Sleep Timer.
+- Turn off the Brick Pro display while playback continues, then wake on any input.
 - Persist volume, shuffle, repeat and the last selected track.
 - Rotate local logs and preserve pending error reports.
 - Create deduplicated GitHub Issues when an Issues-only token is configured.
 - Update in place over verified TLS with SHA-256 validation and atomic writes.
 - Keep the complete application in one visible menu directory.
 
-AAC/M4A, playlists, album art, lyrics, radio, podcasts and downloads are not yet
-included.
+AAC/M4A, album art, online lyrics/translation, radio, podcasts, EQ and crossfade
+are not included. Screen-off Playback keeps music running while this app remains
+open; it is not a background service after launching another application.
 
 ## Install
 
 Download exactly one package from the GitHub release:
 
-- Stock OS: `trimui-music-player-v1.0.2-stock.zip`
-- Spruce OS: `trimui-music-player-v1.0.2-spruce.zip`
+- Stock OS: `trimui-music-player-v1.1.0-stock.zip`
+- Spruce OS: `trimui-music-player-v1.1.0-spruce.zip`
 
 Extract the selected ZIP directly to the SD-card root. Do not copy files between
 folders manually.
@@ -72,10 +76,39 @@ the SD-card root.
 - Y in Library: All Songs / Favorite Songs / Playlists / Favorite Playlists
 - Y in Now Playing: repeat off / all / one
 - Start: library / now playing
-- Select: send a diagnostic report, or install an available OTA update
+- Select: open Quick Menu
 
 To exit, press **B** in Library, then **A** to confirm. Press **B** again to
 cancel. The footer displays the controls for the current screen.
+
+Quick Menu provides Lyrics, Sleep Timer, Screen-off Playback, diagnostics and
+OTA installation. Use Up/Down to select, A to activate, B or Select to close.
+On Sleep Timer, Left/Right or A cycles Off, 15, 30, 45, 60, 90 minutes and End
+of track. Any controller input wakes the screen without also triggering an app
+action.
+
+## Lyrics
+
+Place a synchronized LRC file beside the matching audio file with the same base
+name:
+
+```text
+/Music/Album/Song.mp3
+/Music/Album/Song.lrc
+```
+
+Standard `[mm:ss.xx]text` timestamps, multiple timestamps per line and LRC
+`[offset:]` are supported. For an existing translated LRC, append a language
+code and keep matching timestamps:
+
+```text
+/Music/Album/Song.vi.lrc
+/Music/Album/Song.en.lrc
+```
+
+Open Lyrics from Quick Menu. Press X on the Lyrics screen to cycle translation
+Off and the available language files. Translation is read offline; this release
+does not send lyrics to an online translation service.
 
 Each folder under `Music` is treated as a playlist. Favorite songs and favorite
 playlists are stored in `data/collections.json` and are preserved by OTA.

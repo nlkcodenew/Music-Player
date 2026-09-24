@@ -3,10 +3,13 @@ import threading
 
 from .audio import AudioPlayer
 from .collections import Collections
+from .display import DisplayController
 from .input import InputState
 from .logger import get_logger
+from .lyrics import load_lyrics
 from .reporter import queue_report, retry_pending
 from .settings import Settings
+from .sleep_timer import SleepTimer
 from .sdl_runtime import (
     SDL_Color,
     SDL_DisplayMode,
@@ -62,8 +65,14 @@ class MusicPlayerApp:
         self.library_mode = "all"
         self.playlist_parent_mode = "playlists"
         self.active_playlist = ""
+        self.quick_menu = False
+        self.quick_menu_selection = 0
+        self.sleep_timer = SleepTimer()
+        self.display = DisplayController(paths)
+        self.lyrics_cache = {}
 
     def initialize(self):
+        self.display.restore()
         self.runtime = SDLRuntime(self.paths)
         flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER
         if self.runtime.SDL_Init(flags) != 0:
@@ -125,7 +134,7 @@ class MusicPlayerApp:
             if update_available(manifest) and manifest.get("version") != self.settings.get("skipped_version"):
                 with self.update_lock:
                     self.update_manifest = manifest
-                    self.status = "Update v%s available - press SELECT to install" % manifest["version"]
+                    self.status = "Update v%s available - open SELECT menu to install" % manifest["version"]
                     self.status_error = False
         except Exception as error:
             get_logger().warning("OTA check failed: %s", error)
@@ -169,7 +178,7 @@ class MusicPlayerApp:
                 if retry_pending(self.paths):
                     self.status = "Diagnostic report sent to GitHub Issues"
                 else:
-                    self.status = "Report saved; connect Wi-Fi and press SELECT again"
+                    self.status = "Report saved; reconnect Wi-Fi and resend from Quick Menu"
                 self.status_error = False
             except Exception as error:
                 get_logger().warning("diagnostic upload failed: %s", error)
@@ -182,6 +191,7 @@ class MusicPlayerApp:
         threading.Thread(target=worker, name="diagnostic-upload", daemon=True).start()
 
     def cleanup(self):
+        self.display.restore()
         try:
             self.settings.save()
             self.collections.save()
@@ -212,14 +222,24 @@ class MusicPlayerApp:
                         self.running = False
                     else:
                         self.input.feed(event)
-                for action in self.input.poll():
-                    self._handle(action)
+                actions = self.input.poll()
+                if self.display.is_off and actions:
+                    self.display.restore()
+                    self.status = "Screen on"
+                    self.status_error = False
+                else:
+                    for action in actions:
+                        self._handle(action)
+                self._update_sleep_timer()
                 self.player.update()
                 if self.player.error:
                     self.status = self.player.error
                     self.status_error = True
-                self._render()
-                self.runtime.SDL_Delay(16)
+                if self.display.is_off:
+                    self.runtime.SDL_Delay(80)
+                else:
+                    self._render()
+                    self.runtime.SDL_Delay(16)
             return 0
         finally:
             self.cleanup()
@@ -227,6 +247,9 @@ class MusicPlayerApp:
     def _handle(self, action):
         get_logger().info("input action=%s screen=%s", action, self.screen)
         if self.update_busy:
+            return
+        if getattr(self, "quick_menu", False):
+            self._handle_quick_menu(action)
             return
         if self.exit_confirmation:
             if action == "a":
@@ -237,16 +260,16 @@ class MusicPlayerApp:
                 self.exit_confirmation = False
             return
         if action == "select":
-            if self.update_manifest:
-                self._install_update()
-            else:
-                self._send_diagnostic()
+            self.quick_menu = True
+            self.quick_menu_selection = 0
             return
         if action == "start":
             self.screen = "playing" if self.screen == "library" else "library"
             return
         if action == "b":
-            if self.screen == "playing":
+            if self.screen == "lyrics":
+                self.screen = "playing"
+            elif self.screen == "playing":
                 self.screen = "library"
             elif self.library_mode == "playlist_tracks":
                 self.library_mode = self.playlist_parent_mode
@@ -258,11 +281,13 @@ class MusicPlayerApp:
             return
         if action == "l1":
             self.player.advance(False)
-            self.screen = "playing"
+            if self.screen == "library":
+                self.screen = "playing"
             return
         if action == "r1":
             self.player.advance(True)
-            self.screen = "playing"
+            if self.screen == "library":
+                self.screen = "playing"
             return
         if action == "l2":
             self.player.set_volume(int(self.settings.get("volume")) - 5)
@@ -271,7 +296,10 @@ class MusicPlayerApp:
             self.player.set_volume(int(self.settings.get("volume")) + 5)
             return
         if action == "x":
-            self._toggle_favorite()
+            if self.screen == "lyrics":
+                self._cycle_lyrics_translation()
+            else:
+                self._toggle_favorite()
             return
         if action == "y":
             if self.screen == "library":
@@ -312,6 +340,118 @@ class MusicPlayerApp:
                 self.player.seek(-10)
             elif action == "right":
                 self.player.seek(10)
+
+    def _quick_menu_entries(self):
+        entries = [
+            ("lyrics", "Lyrics"),
+            ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
+            ("screen_off", "Screen-off Playback"),
+        ]
+        if self.update_manifest:
+            entries.append(("update", "Install Update v%s" % self.update_manifest["version"]))
+        entries.extend((("diagnostic", "Send Diagnostic"), ("close", "Close Menu")))
+        return entries
+
+    def _handle_quick_menu(self, action):
+        entries = self._quick_menu_entries()
+        if action in ("b", "select"):
+            self.quick_menu = False
+            return
+        if action == "up":
+            self.quick_menu_selection = (self.quick_menu_selection - 1) % len(entries)
+            return
+        if action == "down":
+            self.quick_menu_selection = (self.quick_menu_selection + 1) % len(entries)
+            return
+        selected = entries[self.quick_menu_selection][0]
+        if selected == "sleep" and action in ("left", "right"):
+            self._cycle_sleep_timer(-1 if action == "left" else 1)
+            return
+        if action != "a":
+            return
+        if selected == "lyrics":
+            if not self.player.current:
+                self.status = "Play a song before opening Lyrics"
+                self.status_error = True
+            else:
+                self.screen = "lyrics"
+                self.status = ""
+            self.quick_menu = False
+        elif selected == "sleep":
+            self._cycle_sleep_timer(1)
+        elif selected == "screen_off":
+            self.quick_menu = False
+            if not self.player.current:
+                self.status = "Play a song before turning the screen off"
+                self.status_error = True
+            elif not self.display.screen_off():
+                self.status = "Screen-off playback is unavailable on this firmware"
+                self.status_error = True
+        elif selected == "update":
+            self.quick_menu = False
+            self._install_update()
+        elif selected == "diagnostic":
+            self.quick_menu = False
+            self._send_diagnostic()
+        else:
+            self.quick_menu = False
+
+    def _cycle_sleep_timer(self, step):
+        track = self.player.current
+        next_index = (self.sleep_timer.preset_index + step) % 7
+        if next_index == 6 and not track:
+            self.status = "Play a song before choosing End of track"
+            self.status_error = True
+            return
+        label = self.sleep_timer.set(next_index, track.path if track else "")
+        self.status = "Sleep Timer: %s" % label
+        self.status_error = False
+        get_logger().info("sleep timer set=%s", label)
+
+    def _update_sleep_timer(self):
+        if not self.sleep_timer.active or not self.player:
+            return
+        track = self.player.current
+        paused = bool(self.player.music and self.runtime.Mix_PausedMusic())
+        playing = bool(self.player.music and self.runtime.Mix_PlayingMusic())
+        if self.sleep_timer.expired(track.path if track else "", playing, paused):
+            label = self.sleep_timer.label
+            self.sleep_timer.cancel()
+            self.player.fade_stop()
+            self.status = "Sleep Timer finished (%s)" % label
+            self.status_error = False
+
+    def _lyrics_document(self):
+        track = self.player.current
+        if not track:
+            return None
+        if track.path not in self.lyrics_cache:
+            try:
+                self.lyrics_cache[track.path] = load_lyrics(track.path)
+                lyrics = self.lyrics_cache[track.path]
+                get_logger().info(
+                    "lyrics loaded lines=%d translations=%d",
+                    len(lyrics.lines), len(lyrics.languages),
+                )
+            except OSError as error:
+                get_logger().warning("cannot load lyrics: %s", error)
+                self.lyrics_cache[track.path] = None
+        return self.lyrics_cache[track.path]
+
+    def _cycle_lyrics_translation(self):
+        lyrics = self._lyrics_document()
+        if not lyrics or not lyrics.languages:
+            self.status = "No translation file found"
+            self.status_error = True
+            return
+        values = [""] + lyrics.languages
+        current = self.settings.get("lyrics_language")
+        index = values.index(current) if current in values else 0
+        language = values[(index + 1) % len(values)]
+        self.settings.set("lyrics_language", language)
+        self.status = "Translation: %s" % (language.upper() if language else "Off")
+        self.status_error = False
+        get_logger().info("lyrics translation=%s", language or "off")
 
     def _library_entries(self):
         if self.library_mode == "favorites":
@@ -411,11 +551,15 @@ class MusicPlayerApp:
         self.text(subtitle, self.width - 28 - subtitle_width, 23, "small", self.MUTED)
         if self.screen == "library":
             self._render_library()
+        elif self.screen == "lyrics":
+            self._render_lyrics()
         else:
             self._render_playing()
         self._render_footer()
         if self.exit_confirmation:
             self._render_exit_confirmation()
+        if self.quick_menu:
+            self._render_quick_menu()
         self.runtime.SDL_RenderPresent(self.renderer)
 
     def _render_library(self):
@@ -482,6 +626,55 @@ class MusicPlayerApp:
         self.fill(self.width // 2 - button_width // 2, center_y + 145, button_width, 48, self.ACCENT)
         self.text(button, self.width // 2, center_y + 154, "body", self.BG, center=True)
 
+    def _render_lyrics(self):
+        track = self.player.current
+        if not track:
+            self.text("Nothing is playing", self.width // 2, self.height // 2, "hero", center=True)
+            return
+        self.text(self.ellipsize(track.title, self.width - 100, "title"), self.width // 2, 86, "title", center=True)
+        lyrics = self._lyrics_document()
+        if not lyrics or not lyrics.lines:
+            self.text("No synchronized lyrics found", self.width // 2, self.height // 2 - 35, "hero", center=True)
+            self.text("Add Song.lrc next to Song.mp3", self.width // 2, self.height // 2 + 25, "body", self.MUTED, center=True)
+            return
+        position = self.player.position()
+        current = lyrics.current_index(position)
+        focus = max(0, current)
+        start = max(0, min(focus - 2, max(0, len(lyrics.lines) - 5)))
+        language = self.settings.get("lyrics_language")
+        if language not in lyrics.languages:
+            language = ""
+        y = 155
+        for index in range(start, min(len(lyrics.lines), start + 5)):
+            line = lyrics.lines[index]
+            active = index == current
+            font = "title" if active else "body"
+            color = self.ACCENT if active else self.MUTED
+            self.text(self.ellipsize(line.text or "...", self.width - 100, font), self.width // 2, y, font, color, center=True)
+            translation = lyrics.translation(index, language)
+            if translation:
+                self.text(self.ellipsize(translation, self.width - 120, "small"), self.width // 2, y + 39, "small", self.TEXT if active else self.MUTED, center=True)
+                y += 82
+            else:
+                y += 65
+
+    def _render_quick_menu(self):
+        entries = self._quick_menu_entries()
+        width = min(680, self.width - 80)
+        height = 120 + len(entries) * 58
+        x = (self.width - width) // 2
+        y = (self.height - height) // 2
+        self.fill(x - 4, y - 4, width + 8, height + 8, self.ACCENT)
+        self.fill(x, y, width, height, self.PANEL)
+        self.text("QUICK MENU", self.width // 2, y + 28, "title", center=True)
+        for index, (_, label) in enumerate(entries):
+            row_y = y + 86 + index * 58
+            selected = index == self.quick_menu_selection
+            if selected:
+                self.fill(x + 24, row_y - 8, width - 48, 48, self.ACCENT)
+            color = self.BG if selected else self.TEXT
+            self.text(self.ellipsize(label, width - 90), x + 45, row_y, "body", color)
+
     def _render_footer(self):
         footer_height = 62
         y = self.height - footer_height
@@ -490,11 +683,15 @@ class MusicPlayerApp:
             "ON" if self.settings.get("shuffle") else "OFF",
             str(self.settings.get("repeat")).upper(), self.settings.get("volume"),
         )
+        if self.sleep_timer.active:
+            state += "   SLEEP %s" % self.sleep_timer.status()
         self.text(state, 24, y + 18, "small", self.MUTED)
         if self.screen == "library":
             hint = "A OPEN/PLAY  X FAVORITE  Y VIEW"
+        elif self.screen == "lyrics":
+            hint = "A PAUSE  X TRANSLATION  SELECT MENU"
         else:
-            hint = "A PAUSE/RESUME  B LIBRARY  X FAVORITE"
+            hint = "A PAUSE/RESUME  X FAVORITE  SELECT MENU"
         hint_width = self.measure(hint, "small")[0]
         self.text(hint, self.width - 24 - hint_width, y + 18, "small")
         if self.status:
@@ -517,6 +714,8 @@ class MusicPlayerApp:
     def _screen_title(self):
         if self.screen == "playing":
             return "NOW PLAYING"
+        if self.screen == "lyrics":
+            return "LYRICS"
         return {
             "all": "ALL SONGS",
             "favorites": "FAVORITE SONGS",

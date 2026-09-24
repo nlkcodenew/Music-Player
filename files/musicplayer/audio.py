@@ -86,6 +86,17 @@ class AudioPlayer:
         self.music = None
         self.started = False
 
+    def fade_stop(self, steps=10, delay=0.05):
+        if not self.music:
+            return
+        volume = max(0, min(100, int(self.settings.get("volume"))))
+        for step in range(steps - 1, -1, -1):
+            self.runtime.Mix_VolumeMusic(round(volume * step * MIX_MAX_VOLUME / (steps * 100.0)))
+            time.sleep(delay)
+        self.stop()
+        self.runtime.Mix_VolumeMusic(round(volume * MIX_MAX_VOLUME / 100.0))
+        get_logger().info("playback stopped by sleep timer")
+
     def toggle_pause(self):
         if not self.music:
             return False

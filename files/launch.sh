@@ -83,7 +83,22 @@ else
 fi
 
 touch /tmp/stay_alive 2>/dev/null
-trap 'rm -f /tmp/stay_alive 2>/dev/null' EXIT INT TERM
+
+restore_display() {
+    RECOVERY_FILE="$APP/data/display-restore.json"
+    if [ -n "$PYTHON" ] && [ -f "$RECOVERY_FILE" ]; then
+        "$PYTHON" -m musicplayer.display --restore "$RECOVERY_FILE" >> "$STDIO_LOG" 2>&1 || true
+    fi
+}
+
+cleanup_launcher() {
+    restore_display
+    rm -f /tmp/stay_alive 2>/dev/null
+}
+
+trap cleanup_launcher EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 while true; do
     rm -f "$APP/.restart"
@@ -93,6 +108,7 @@ while true; do
     fi
     "$PYTHON" app.py "$@" >> "$STDIO_LOG" 2>&1
     STATUS=$?
+    restore_display
     echo "app_exit=$STATUS" >> "$STDIO_LOG"
     if [ "$STATUS" -ne 0 ]; then
         "$PYTHON" app.py --diagnose >> "$STDIO_LOG" 2>&1 || true

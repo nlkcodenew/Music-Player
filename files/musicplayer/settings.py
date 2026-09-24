@@ -10,6 +10,7 @@ DEFAULTS = {
     "last_track": "",
     "auto_update": True,
     "skipped_version": "",
+    "lyrics_language": "",
 }
 
 
@@ -47,6 +48,7 @@ class Settings:
             self.values["repeat"] = "off"
         self.values["shuffle"] = bool(self.values.get("shuffle"))
         self.values["auto_update"] = bool(self.values.get("auto_update"))
+        self.values["lyrics_language"] = str(self.values.get("lyrics_language", ""))
         return self
 
     def save(self):
@@ -57,4 +59,3 @@ class Settings:
 
     def set(self, key, value):
         self.values[key] = value
-

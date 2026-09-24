@@ -9,6 +9,7 @@ files/settings.json
 files/collections.json
 files/identity.json
 files/pending-reports.json
+files/display-restore.json
 files/music-player.log*
 files/music-player-stdio.log*
 files/music-player-diagnostics.json
