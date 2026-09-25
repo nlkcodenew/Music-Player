@@ -4,7 +4,7 @@ Music Player is a self-contained music player for TrimUI Brick Pro Stock OS and
 Spruce OS. It does not require NextUI libraries or place a hidden application
 directory at the SD-card root.
 
-## Version 1.3.0
+## Version 1.3.1
 
 - Detect Stock OS and Spruce OS at runtime.
 - Scan the SD card recursively for WAV, MP3, OGG, FLAC and OPUS files.
@@ -13,7 +13,8 @@ directory at the SD-card root.
 - Stop after a preset time or at the end of the current track with Sleep Timer.
 - Turn off the Brick Pro display while playback continues, then wake on any input.
 - Return to the OS while a separate background service continues playback.
-- Show the installed version beside every main screen title.
+- Show the installed version and stable `MP-xxxxxxxx` device ID beside every
+  main screen title.
 - Apply a three-band Equalizer with presets before speaker, Bluetooth or USB output.
 - Prefer a connected USB Audio DAC in Auto mode and fall back to system audio.
 - Bundle a consistent AArch64 SDL2_mixer runtime with FLAC decoding.
@@ -21,7 +22,8 @@ directory at the SD-card root.
 - Use SDL_mixer's finished callback so a temporary Bluetooth stall cannot restart a track.
 - Persist volume, shuffle, repeat and the last selected track.
 - Rotate local logs and preserve pending error reports.
-- Create a new GitHub Issue with the complete current-session log for every manual report.
+- Create a private GitHub Issue through a credential-free HTTPS relay for every
+  manual report; optional automatic error reporting is off by default.
 - Update in place over verified TLS with SHA-256 validation and atomic writes.
 - Keep the complete application in one visible menu directory.
 
@@ -32,8 +34,8 @@ not included.
 
 Download exactly one package from the GitHub release:
 
-- Stock OS: `trimui-music-player-v1.3.0-stock.zip`
-- Spruce OS: `trimui-music-player-v1.3.0-spruce.zip`
+- Stock OS: `trimui-music-player-v1.3.1-stock.zip`
+- Spruce OS: `trimui-music-player-v1.3.1-spruce.zip`
 
 Extract the selected ZIP directly to the SD-card root. Do not copy files between
 folders manually.
@@ -62,8 +64,8 @@ Spruce OS installs the same application in its native menu directory:
   musicplayer/
 ```
 
-There is no `/.music-player` directory. Settings, logs, optional credentials and
-OTA updates remain inside the installed `MusicPlayer` directory. The visible
+There is no `/.music-player` directory. Settings, logs and OTA updates remain
+inside the installed `MusicPlayer` directory. The visible
 menu label remains "Music Player"; the folder name intentionally has no spaces
 for compatibility with the Stock OS launcher.
 
@@ -92,8 +94,9 @@ To exit, press **B** in Library, then **A** to confirm. Press **B** again to
 cancel. The footer displays the controls for the current screen.
 
 Quick Menu provides Lyrics, Sleep Timer, Screen-off Playback, Background
-Playback, diagnostics and OTA installation. It also provides Equalizer and
-Audio Output. Use Up/Down to select, A to activate, B or Select to close.
+Playback, diagnostics and OTA installation. It also provides Equalizer, Audio
+Output and the opt-in `Auto-report Errors` setting. Use Up/Down to select, A to
+activate, B or Select to close.
 On Sleep Timer, Left/Right or A cycles Off, 15, 30, 45, 60, 90 minutes and End
 of track. Any controller input wakes the screen without also triggering an app
 action.
@@ -182,15 +185,25 @@ shuffle and SDL end-of-track state.
 
 ## GitHub Issues
 
-Copy `secrets.example.json` to `secrets.json` inside the installed
-`MusicPlayer` directory. Add a fine-grained token restricted to **Issues: read and
-write** for `nlkcodenew/Music-Player`.
+No GitHub token is stored in the app, ZIP, manifest, SD card or request URL. The
+app sends filtered diagnostics to the credential-free HTTPS endpoint configured
+in `reporting.json`; only its Cloudflare Worker secret can create Issues in the
+private diagnostics repository.
 
-`secrets.json`, settings, identity, pending reports, logs and diagnostics are
-never committed, packaged or replaced by OTA. Tokens are never written to logs.
-Every press of `Send Diagnostic` creates a separate Issue. The complete log from
-that application session is snapshotted immediately; long logs continue in Issue
-comments, and failed uploads remain queued for retry.
+Every press of `Send Diagnostic` explicitly sends a separate Issue. The complete
+log from that application session is snapshotted immediately; long logs continue
+in Issue comments, and failed uploads remain queued for retry. Automatic crash
+and operational-error uploads remain disabled until the user enables
+`Select > Auto-report Errors`.
+
+The title shows `ID: MP-xxxxxxxx`. Ask the user for this ID when investigating a
+report; the exact same ID appears in the corresponding Issue title and body.
+Settings, identity, pending reports, logs and diagnostics are never committed,
+packaged or replaced by OTA.
+
+The production relay is
+`https://trimui-music-player-issue-relay.issue-relay.workers.dev/report`. Its
+GitHub token is stored only as a Cloudflare Worker secret.
 
 ## Development
 

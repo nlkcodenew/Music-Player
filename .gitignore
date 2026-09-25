@@ -13,3 +13,5 @@ files/display-restore.json
 files/music-player.log*
 files/music-player-stdio.log*
 files/music-player-diagnostics.json
+deploy/issue-relay/wrangler.toml
+deploy/issue-relay/.wrangler/

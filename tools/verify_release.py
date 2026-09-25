@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import sys
+import urllib.parse
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +21,7 @@ EXCLUDED = {
     "background-session.json", "background-command", "background.pid",
     "background-status.json", "background-resume.json",
 }
+TOKEN_MARKERS = (b"github_pat_", b"ghp_", b"MUSIC_PLAYER_GITHUB_TOKEN")
 
 
 def verify_archive(path, package_root, manifest):
@@ -79,6 +81,24 @@ def main():
     manifest_paths = {item["path"] for item in manifest["files"]}
     if any(os.path.basename(path) in EXCLUDED for path in manifest_paths):
         raise SystemExit("user data appears in OTA manifest")
+    if "reporting.json" not in manifest_paths:
+        raise SystemExit("reporting.json is missing from OTA manifest")
+    reporting_path = os.path.join(ROOT, "files", "reporting.json")
+    with open(reporting_path, encoding="utf-8") as handle:
+        relay_url = json.load(handle).get("issue_relay_url", "")
+    parsed = urllib.parse.urlsplit(relay_url)
+    if (
+        parsed.scheme != "https" or not parsed.netloc or parsed.username
+        or parsed.password or parsed.query or parsed.fragment
+    ):
+        raise SystemExit("reporting.json must contain a credential-free HTTPS relay URL")
+    for item in manifest["files"]:
+        source = os.path.join(ROOT, "files", *item["path"].split("/"))
+        if os.path.isfile(source):
+            with open(source, "rb") as handle:
+                data = handle.read()
+            if any(marker in data for marker in TOKEN_MARKERS):
+                raise SystemExit("GitHub credential marker in release: %s" % item["path"])
 
     archives = glob.glob(os.path.join(ROOT, "dist", "*.zip"))
     expected_names = {

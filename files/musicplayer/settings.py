@@ -16,6 +16,7 @@ DEFAULTS = {
     "eq_mid": 0,
     "eq_treble": 0,
     "audio_output": "auto",
+    "auto_report_errors": False,
 }
 
 
@@ -53,6 +54,7 @@ class Settings:
             self.values["repeat"] = "off"
         self.values["shuffle"] = bool(self.values.get("shuffle"))
         self.values["auto_update"] = bool(self.values.get("auto_update"))
+        self.values["auto_report_errors"] = bool(self.values.get("auto_report_errors"))
         self.values["lyrics_language"] = str(self.values.get("lyrics_language", ""))
         if self.values.get("eq_preset") not in (
             "Flat", "Bass Boost", "Vocal", "Rock", "Pop", "Classical", "Jazz", "Custom",

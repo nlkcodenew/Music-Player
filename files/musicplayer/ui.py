@@ -8,6 +8,7 @@ from .background import BACKGROUND_EXIT, load_resume, save_background_session
 from .collections import Collections
 from .display import DisplayController
 from .input import InputState
+from .identity import installation_id
 from .logger import get_logger
 from .lyrics import load_lyrics
 from .reporter import queue_report, retry_pending
@@ -46,6 +47,7 @@ class MusicPlayerApp:
         self.paths = paths
         self.tracks = tracks
         self.settings = Settings(paths.settings_file).load()
+        self.install_id = installation_id(paths)
         self.collections = Collections(paths.collections_file).load()
         self.runtime = None
         self.window = None
@@ -228,7 +230,7 @@ class MusicPlayerApp:
                 queue_report(
                     self.paths, "manual_diagnostic", "Submitted with SELECT", unique=True
                 )
-                if retry_pending(self.paths):
+                if retry_pending(self.paths, force=True):
                     self.status = "Diagnostic report sent to GitHub Issues"
                 else:
                     self.status = "Report saved; reconnect Wi-Fi and resend from Quick Menu"
@@ -419,6 +421,12 @@ class MusicPlayerApp:
             ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
             ("screen_off", "Screen-off Playback"),
             ("background", "Background Playback (Return to OS)"),
+            (
+                "auto_report",
+                "Auto-report Errors: %s" % (
+                    "On" if self.settings.get("auto_report_errors") else "Off"
+                ),
+            ),
         ]
         if self.update_manifest:
             entries.append(("update", "Install Update v%s" % self.update_manifest["version"]))
@@ -490,6 +498,12 @@ class MusicPlayerApp:
                 self.exit_code = BACKGROUND_EXIT
                 self.quick_menu = False
                 self.running = False
+        elif selected == "auto_report":
+            enabled = not self.settings.get("auto_report_errors")
+            self.settings.set("auto_report_errors", enabled)
+            self.settings.save()
+            self.status = "Automatic error reports: %s" % ("On" if enabled else "Off")
+            self.status_error = False
         elif selected == "update":
             self.quick_menu = False
             self._install_update()
@@ -685,7 +699,10 @@ class MusicPlayerApp:
         title = self._screen_title()
         self.text(title, 28, 15, "title")
         title_width = self.measure(title, "title")[0]
-        self.text("v%s" % APP_VERSION, 44 + title_width, 24, "small", self.ACCENT)
+        self.text(
+            self._version_label(),
+            44 + title_width, 24, "small", self.ACCENT,
+        )
         if not self.player.audio_ready:
             output = "AUDIO OFF"
         else:
@@ -707,6 +724,9 @@ class MusicPlayerApp:
         if self.quick_menu:
             self._render_quick_menu()
         self.runtime.SDL_RenderPresent(self.renderer)
+
+    def _version_label(self):
+        return "v%s | ID: %s" % (APP_VERSION, self.install_id)
 
     def _render_library(self):
         entries = self._library_entries()
@@ -815,15 +835,16 @@ class MusicPlayerApp:
     def _render_quick_menu(self):
         entries = self._quick_menu_entries()
         width = min(680, self.width - 80)
-        height = 120 + len(entries) * 58
+        row_height = 52
+        height = 102 + len(entries) * row_height
         x = (self.width - width) // 2
         y = (self.height - height) // 2
         self.fill(x - 4, y - 4, width + 8, height + 8, self.ACCENT)
         self.fill(x, y, width, height, self.PANEL)
         title = "EQUALIZER" if getattr(self, "quick_menu_page", "main") == "equalizer" else "QUICK MENU"
-        self.text(title, self.width // 2, y + 28, "title", center=True)
+        self.text(title, self.width // 2, y + 22, "title", center=True)
         for index, (_, label) in enumerate(entries):
-            row_y = y + 86 + index * 58
+            row_y = y + 70 + index * row_height
             selected = index == self.quick_menu_selection
             if selected:
                 self.fill(x + 24, row_y - 8, width - 48, 48, self.ACCENT)

@@ -17,10 +17,11 @@ from musicplayer.audio_output import choose_audio_device, is_usb_audio_device
 from musicplayer.collections import Collections
 from musicplayer.display import DisplayController
 from musicplayer.equalizer import Equalizer, preset_gains
+from musicplayer.identity import installation_id
 from musicplayer.library import natural_key, scan_library
 from musicplayer.lyrics import load_lyrics, parse_lrc
 from musicplayer.paths import RuntimePaths, detect_os
-from musicplayer.reporter import _redact, _submit, queue_report
+from musicplayer.reporter import _post_relay, _redact, _submit, queue_report, retry_pending
 from musicplayer.settings import Settings
 from musicplayer.sleep_timer import SleepTimer
 from musicplayer.updater import apply_update, update_available, validate_manifest, version_tuple
@@ -209,6 +210,14 @@ class ReporterTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(len(pending), 1)
 
+    def test_installation_id_is_stable(self):
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(data_dir=root)
+            first = installation_id(paths)
+            second = installation_id(paths)
+        self.assertRegex(first, r"^MP-[A-F0-9]{8}$")
+        self.assertEqual(first, second)
+
     def test_manual_reports_are_unique_and_snapshot_session_log(self):
         with tempfile.TemporaryDirectory() as root:
             session_log = os.path.join(root, "session.log")
@@ -228,7 +237,7 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual(len(pending), 2)
         self.assertEqual(pending[0]["session_log"], "complete current session")
 
-    def test_long_session_log_continues_in_issue_comments(self):
+    def test_long_session_log_continues_in_relay_comments(self):
         with tempfile.TemporaryDirectory() as root:
             paths = mock.Mock(
                 app_dir=os.path.join(root, "MusicPlayer"),
@@ -244,17 +253,45 @@ class ReporterTests(unittest.TestCase):
                 "fingerprint": "123456789abc",
                 "session_log": "x" * (90 * 1024),
             }
-            responses = [[], {"comments_url": "https://api.example/comments"}, {}, {}]
-            with mock.patch(
-                "musicplayer.reporter._request_json", side_effect=responses
-            ) as request:
-                _submit(paths, item, "token", "owner/repo")
+            with mock.patch("musicplayer.reporter.installation_id", return_value="MP-A1B2C3D4"), \
+                    mock.patch("musicplayer.reporter._post_json") as request:
+                _submit(paths, item, "https://reports.example.test/report")
 
         calls = request.call_args_list
-        self.assertEqual(len(calls), 4)
-        self.assertEqual(calls[1].kwargs["method"], "POST")
-        self.assertEqual(calls[2].args[1], "https://api.example/comments")
-        self.assertIn("Session log part 3/3", calls[3].kwargs["body"]["body"])
+        self.assertEqual(len(calls), 1)
+        payload = calls[0].args[2]
+        self.assertEqual(len(payload["comments"]), 2)
+        self.assertIn("Session log part 3/3", payload["comments"][1])
+        self.assertIn("MP-A1B2C3D4", payload["title"])
+
+    def test_relay_request_has_no_github_authorization(self):
+        paths = mock.Mock(app_dir="/app")
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"accepted": true}'
+        response.__exit__.return_value = False
+        with mock.patch("musicplayer.reporter.verified_context", return_value=None), \
+                mock.patch("musicplayer.reporter.urllib.request.urlopen", return_value=response) as open_url:
+            _post_relay(
+                paths, "https://reports.example.test/report", "[device-log] test",
+                "body", [], "a" * 64,
+            )
+        request = open_url.call_args.args[0]
+        self.assertIsNone(request.get_header("Authorization"))
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["app"], "trimui-music-player")
+
+    def test_automatic_retry_requires_opt_in(self):
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(
+                app_dir=root,
+                settings_file=os.path.join(root, "settings.json"),
+                pending_reports_file=os.path.join(root, "pending.json"),
+            )
+            with open(paths.pending_reports_file, "w", encoding="utf-8") as handle:
+                json.dump([{"reason": "error"}], handle)
+            with mock.patch("musicplayer.reporter._submit") as submit:
+                self.assertFalse(retry_pending(paths))
+            submit.assert_not_called()
 
 
 class UpdaterTests(unittest.TestCase):
@@ -301,7 +338,31 @@ class UpdaterTests(unittest.TestCase):
 
 class UiLogicTests(unittest.TestCase):
     def test_release_version_is_visible_in_header_format(self):
-        self.assertEqual("v%s" % APP_VERSION, "v1.3.0")
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.install_id = "MP-A1B2C3D4"
+        self.assertEqual(app._version_label(), "v1.3.1 | ID: MP-A1B2C3D4")
+
+    def test_quick_menu_can_enable_automatic_error_reports(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"auto_report_errors": False, "audio_output": "auto"}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        app.quick_menu = True
+        app.quick_menu_page = "main"
+        app.status = ""
+        app.status_error = False
+        app.quick_menu_selection = next(
+            index for index, entry in enumerate(app._quick_menu_entries())
+            if entry[0] == "auto_report"
+        )
+        app._handle_quick_menu("a")
+        self.assertTrue(values["auto_report_errors"])
+        app.settings.save.assert_called_once()
 
     def test_equalizer_menu_changes_preset(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
