@@ -207,6 +207,11 @@ GitHub token is stored only as a Cloudflare Worker secret.
 
 ## Development
 
+Project state and next-session notes are maintained in:
+
+- `docs/PROJECT_STATUS.md`
+- `docs/NEW_SESSION_HANDOFF.md`
+
 Build and verify both packages:
 
 ```powershell
@@ -216,3 +221,9 @@ python tools/verify_release.py
 
 A `vX.Y.Z` tag publishes the two ZIP files, their SHA-256 sidecars and the
 shared `ota-manifest.json` release asset.
+
+The current `v1.3.1` release contains 31 OTA files and 31 entries in each ZIP.
+Public release assets were downloaded again and matched these SHA-256 values:
+
+- Stock OS: `90888d006abae099e54ff9a89888f0de52db100dec4b96d15cc450281b8a4f19`
+- Spruce OS: `39d6f295ecc0416fa7a0a91d5eec371598b602fc4dc73f06e883d8487aad70e7`
