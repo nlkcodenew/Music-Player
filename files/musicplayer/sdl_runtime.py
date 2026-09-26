@@ -1,9 +1,13 @@
 import ctypes
 import glob
+import logging
 import os
 from ctypes import POINTER, Structure, Union, c_char_p, c_double, c_int, c_int16, c_int32, c_uint8, c_uint16, c_uint32, c_void_p
 
 from .diagnostics import LIBRARIES, library_candidates
+
+
+LOGGER = logging.getLogger("musicplayer")
 
 
 SDL_INIT_AUDIO = 0x00000010
@@ -110,7 +114,9 @@ def _load(paths, key):
     errors = []
     for candidate in library_candidates(paths, LIBRARIES[key]):
         try:
-            return ctypes.CDLL(candidate)
+            library = ctypes.CDLL(candidate)
+            LOGGER.info("loaded %s library from %s", key, candidate)
+            return library
         except OSError as error:
             errors.append("%s: %s" % (candidate, error))
     raise RuntimeError("cannot load %s\n%s" % (key, "\n".join(errors)))

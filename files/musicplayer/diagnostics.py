@@ -14,12 +14,29 @@ LIBRARIES = {
 
 
 def library_directories(paths):
+    app_libs = os.path.join(paths.app_dir, "libs")
+    system_libs = os.path.join(paths.sdcard_path, "System", "lib")
+    pyui_libs = os.path.join(paths.sdcard_path, "App", "PyUI", "dll")
+    pyui_mali_libs = os.path.join(paths.sdcard_path, "App", "PyUI", "dll-mali")
+    if paths.os_name == "spruce":
+        return (
+            app_libs,
+            os.path.join(paths.sdcard_path, "spruce", "brick", "sdl2"),
+            "/usr/lib64",
+            "/usr/lib",
+            "/lib",
+            pyui_libs,
+            os.path.join(paths.sdcard_path, "spruce", "flip", "lib"),
+            system_libs,
+            "/usr/trimui/lib",
+            pyui_mali_libs,
+        )
     return (
-        os.path.join(paths.app_dir, "libs"),
-        os.path.join(paths.sdcard_path, "System", "lib"),
+        app_libs,
+        system_libs,
         "/usr/trimui/lib",
-        os.path.join(paths.sdcard_path, "App", "PyUI", "dll-mali"),
-        os.path.join(paths.sdcard_path, "App", "PyUI", "dll"),
+        pyui_mali_libs,
+        pyui_libs,
         "/usr/lib64",
         "/usr/lib",
         "/lib",
@@ -74,7 +91,8 @@ def collect_diagnostics(paths):
             key: os.environ.get(key, "")
             for key in (
                 "SDCARD_PATH", "PLATFORM", "DEVICE", "IS_NEXT", "MUSIC_PLAYER_OS",
-                "SDL_AUDIODRIVER", "SDL_VIDEODRIVER", "LD_LIBRARY_PATH",
+                "SDL_AUDIODRIVER", "SDL_VIDEODRIVER", "PYSDL2_DLL_PATH",
+                "LD_LIBRARY_PATH",
             )
         },
         "libraries": {

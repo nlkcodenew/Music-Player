@@ -16,6 +16,7 @@ from musicplayer import APP_VERSION
 from musicplayer.audio_output import choose_audio_device, is_usb_audio_device
 from musicplayer.collections import Collections
 from musicplayer.display import DisplayController
+from musicplayer.diagnostics import library_directories
 from musicplayer.equalizer import Equalizer, preset_gains
 from musicplayer.identity import installation_id
 from musicplayer.library import natural_key, scan_library
@@ -82,6 +83,18 @@ class PathTests(unittest.TestCase):
                 environ={"MUSIC_PLAYER_STDIO_LOG": launcher_log},
             )
         self.assertEqual(paths.stdio_log_file, launcher_log)
+
+    def test_spruce_prefers_native_sdl_runtime_over_mali_runtime(self):
+        paths = mock.Mock(
+            app_dir="/sd/App/MusicPlayer",
+            sdcard_path="/sd",
+            os_name="spruce",
+        )
+        directories = library_directories(paths)
+        native_sdl = os.path.join("/sd", "spruce", "brick", "sdl2")
+        mali_runtime = os.path.join("/sd", "App", "PyUI", "dll-mali")
+        self.assertLess(directories.index(native_sdl), directories.index(mali_runtime))
+        self.assertLess(directories.index("/usr/lib"), directories.index(mali_runtime))
 
 
 class SettingsTests(unittest.TestCase):
@@ -340,7 +353,7 @@ class UiLogicTests(unittest.TestCase):
     def test_release_version_is_visible_in_header_format(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
         app.install_id = "MP-A1B2C3D4"
-        self.assertEqual(app._version_label(), "v1.3.1 | ID: MP-A1B2C3D4")
+        self.assertEqual(app._version_label(), "v%s | ID: MP-A1B2C3D4" % APP_VERSION)
 
     def test_quick_menu_can_enable_automatic_error_reports(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)

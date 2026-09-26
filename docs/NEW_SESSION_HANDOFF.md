@@ -1,22 +1,20 @@
-# New-session handoff — Music Player v1.3.1
+# New-session handoff — Music Player v1.3.2
 
-> Updated 2026-09-25. Read this file and `docs/PROJECT_STATUS.md` first.
+> Updated 2026-09-26. Read this file and `docs/PROJECT_STATUS.md` first.
 
 ## Quick state
 
 - Repo: `https://github.com/nlkcodenew/Music-Player`.
 - Workspace: `E:\Trimiu Brick Pro\Project APPS\Music-Player`.
 - Branch: `main`.
-- Latest release: `v1.3.1`.
-- Feature commit/tag: `91bf9b7` / `v1.3.1`.
-- Release: `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.3.1`.
-- 48/48 tests passed; both ZIPs verified with 31 entries and 31 OTA files.
-- Stock SHA-256:
-  `90888d006abae099e54ff9a89888f0de52db100dec4b96d15cc450281b8a4f19`.
-- Spruce SHA-256:
-  `39d6f295ecc0416fa7a0a91d5eec371598b602fc4dc73f06e883d8487aad70e7`.
+- Latest release: `v1.3.2`.
+- Feature commit/tag: `v1.3.2` release commit / `v1.3.2`.
+- Release: `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.3.2`.
+- 49/49 tests passed; both ZIPs verified with 31 entries and 31 OTA files.
+- Stock SHA-256: `0675ce83c712053be73b0435b2a9b468ed8a1688826e5a7d97c384086dcb3686`.
+- Spruce SHA-256: `d08275bc9a5209deac5c67ba36e3e9ff67b25798c7d4eddb46c8f37e031802a3`.
 
-## What v1.3.1 changed
+## What v1.3.2 changed
 
 1. The header now shows a stable `MP-xxxxxxxx` device ID beside the version.
 2. The same ID is included in the GitHub Issue title and body.
@@ -26,6 +24,10 @@
 6. Manual `Send Diagnostic` still sends immediately and snapshots the full
    current-session log; long logs continue in Issue comments.
 7. Release verifier rejects token markers and invalid relay URLs.
+8. Spruce SmartProS now loads SDL2/SDL2_ttf from Spruce's native bind path
+   before any `dll-mali` fallback, preventing the `mali-fbdev` startup crash.
+9. Runtime diagnostics now record the selected SDL library paths and
+   `PYSDL2_DLL_PATH` for future firmware compatibility reports.
 
 ## Production relay
 
@@ -77,7 +79,7 @@ git diff --check
 ```text
 Continue E:\Trimiu Brick Pro\Project APPS\Music-Player.
 Read docs/NEW_SESSION_HANDOFF.md and docs/PROJECT_STATUS.md first.
-Latest is v1.3.1 with stable MP-xxxxxxxx header ID and a credential-free HTTPS
+Latest is v1.3.2 with stable MP-xxxxxxxx header ID and a credential-free HTTPS
 Issue relay. Auto-reporting defaults off. Do not place GitHub tokens or the
 private diagnostics repo in the app, manifest or ZIP, and do not overwrite user
 data during OTA.

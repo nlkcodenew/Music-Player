@@ -40,8 +40,22 @@ if ! cd "$APP" 2>> "$STDIO_LOG"; then
 fi
 
 export PATH="$SDCARD_PATH/System/bin:$PATH"
-export LD_LIBRARY_PATH="$APP/libs:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:/usr/lib64:/usr/lib:/lib:$LD_LIBRARY_PATH"
-export PYSDL2_DLL_PATH="$APP/libs:$SDCARD_PATH/System/lib:/usr/trimui/lib:/usr/lib64:/usr/lib"
+if [ -d "$SDCARD_PATH/spruce" ]; then
+    export MUSIC_PLAYER_OS=spruce
+    SPRUCE_SDL_PATH="$SDCARD_PATH/spruce/brick/sdl2"
+    export PYSDL2_DLL_PATH="$SPRUCE_SDL_PATH:$SDCARD_PATH/App/PyUI/dll:$APP/libs"
+    export LD_LIBRARY_PATH="$APP/libs:$SPRUCE_SDL_PATH:/usr/lib64:/usr/lib:/lib:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$LD_LIBRARY_PATH"
+else
+    export MUSIC_PLAYER_OS=stock
+    export LD_LIBRARY_PATH="$APP/libs:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:/usr/lib64:/usr/lib:/lib:$LD_LIBRARY_PATH"
+    export PYSDL2_DLL_PATH="$APP/libs:$SDCARD_PATH/System/lib:/usr/trimui/lib:/usr/lib64:/usr/lib"
+fi
+{
+    echo "os=$MUSIC_PLAYER_OS"
+    echo "platform=${PLATFORM:-unknown}"
+    echo "PYSDL2_DLL_PATH=$PYSDL2_DLL_PATH"
+    echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+} >> "$STDIO_LOG" 2>&1
 
 usable_python() {
     [ -n "$1" ] && [ -f "$1" ] || return 1
@@ -80,15 +94,12 @@ fi
 echo "python=$PYTHON" >> "$STDIO_LOG"
 "$PYTHON" -c 'import sys; print("python_version=" + sys.version.replace("\n", " "))' >> "$STDIO_LOG" 2>&1
 
-if [ -d "$SDCARD_PATH/spruce" ]; then
-    export MUSIC_PLAYER_OS=spruce
+if [ "$MUSIC_PLAYER_OS" = "spruce" ]; then
     export HOME="$APP/data/home"
     mkdir -p "$HOME"
     if [ -x "$SDCARD_PATH/spruce/scripts/asound-setup.sh" ]; then
         "$SDCARD_PATH/spruce/scripts/asound-setup.sh" "$HOME" >> "$STDIO_LOG" 2>&1 || true
     fi
-else
-    export MUSIC_PLAYER_OS=stock
 fi
 
 touch /tmp/stay_alive 2>/dev/null

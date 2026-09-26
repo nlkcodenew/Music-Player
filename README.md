@@ -4,7 +4,7 @@ Music Player is a self-contained music player for TrimUI Brick Pro Stock OS and
 Spruce OS. It does not require NextUI libraries or place a hidden application
 directory at the SD-card root.
 
-## Version 1.3.1
+## Version 1.3.2
 
 - Detect Stock OS and Spruce OS at runtime.
 - Scan the SD card recursively for WAV, MP3, OGG, FLAC and OPUS files.
@@ -26,6 +26,8 @@ directory at the SD-card root.
   manual report; optional automatic error reporting is off by default.
 - Update in place over verified TLS with SHA-256 validation and atomic writes.
 - Keep the complete application in one visible menu directory.
+- On Spruce SmartProS, prefer Spruce's native SDL2 bind directory and system
+  libraries instead of the incompatible `dll-mali` runtime.
 
 AAC/M4A, album art, online lyrics/translation, radio, podcasts and crossfade are
 not included.
@@ -34,8 +36,8 @@ not included.
 
 Download exactly one package from the GitHub release:
 
-- Stock OS: `trimui-music-player-v1.3.1-stock.zip`
-- Spruce OS: `trimui-music-player-v1.3.1-spruce.zip`
+- Stock OS: `trimui-music-player-v1.3.2-stock.zip`
+- Spruce OS: `trimui-music-player-v1.3.2-spruce.zip`
 
 Extract the selected ZIP directly to the SD-card root. Do not copy files between
 folders manually.
@@ -222,8 +224,5 @@ python tools/verify_release.py
 A `vX.Y.Z` tag publishes the two ZIP files, their SHA-256 sidecars and the
 shared `ota-manifest.json` release asset.
 
-The current `v1.3.1` release contains 31 OTA files and 31 entries in each ZIP.
-Public release assets were downloaded again and matched these SHA-256 values:
-
-- Stock OS: `90888d006abae099e54ff9a89888f0de52db100dec4b96d15cc450281b8a4f19`
-- Spruce OS: `39d6f295ecc0416fa7a0a91d5eec371598b602fc4dc73f06e883d8487aad70e7`
+The current `v1.3.2` release contains 31 OTA files and 31 entries in each ZIP.
+The release workflow publishes SHA-256 sidecars after building both packages.
