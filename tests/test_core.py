@@ -464,7 +464,15 @@ class UiLogicTests(unittest.TestCase):
         app.exit_confirmation = False
         app.screen = "library"
         app.library_mode = "all"
+        app.active_playlist = ""
+        app.selection = 3
+        app.scroll = 2
         app.running = True
+
+        app._handle("b")
+        self.assertEqual(app.library_mode, "source")
+        self.assertFalse(app.exit_confirmation)
+        self.assertTrue(app.running)
 
         app._handle("b")
         self.assertTrue(app.exit_confirmation)
@@ -477,6 +485,52 @@ class UiLogicTests(unittest.TestCase):
         app._handle("b")
         app._handle("a")
         self.assertFalse(app.running)
+
+    def test_source_root_offers_local_and_drive(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.update_busy = False
+        app.update_manifest = None
+        app.exit_confirmation = False
+        app.screen = "library"
+        app.library_mode = "source"
+        app.active_playlist = ""
+        app.tracks = [mock.Mock(path="/m/a.mp3")]
+        app.selection = 0
+        app.scroll = 0
+        app.drive_stack = []
+        app.drive_entries = []
+        app.drive_page_token = ""
+        app.drive_loaded = False
+        app.drive_busy = False
+
+        self.assertEqual(app._screen_title(), "MUSIC")
+        app._handle("a")
+        self.assertEqual(app.library_mode, "all")
+
+        app._handle("b")
+        self.assertEqual(app.library_mode, "source")
+
+        app.selection = 1
+        with mock.patch.object(app, "_drive_refresh") as refresh:
+            app._handle("a")
+        self.assertEqual(app.library_mode, "drive")
+        refresh.assert_called_once()
+
+        app._handle("y")
+        self.assertEqual(app.library_mode, "source")
+        with mock.patch.object(app, "_drive_refresh"):
+            app._handle("y")
+        self.assertEqual(app.library_mode, "drive")
+
+    def test_source_rows_ignore_favorite_toggle(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.screen = "library"
+        app.library_mode = "source"
+        app.collections = mock.Mock()
+        app.selection = 0
+        app._toggle_favorite()
+        app.collections.toggle_track.assert_not_called()
+        app.collections.toggle_playlist.assert_not_called()
 
     def test_library_modes_and_favorite_selection_are_safe(self):
         first = mock.Mock(path="/music/one.mp3", folder="Album", title="One")
@@ -1495,14 +1549,30 @@ class DriveTests(unittest.TestCase):
         app.drive_loaded = False
         app.drive_busy = False
         with mock.patch.object(app, "_drive_refresh") as refresh:
-            app._cycle_library_mode()
+            app._open_drive()
         self.assertEqual(app.library_mode, "drive")
         refresh.assert_called_once()
         self.assertEqual(app._screen_title(), "DRIVE")
+        app._open_source()
+        self.assertEqual(app.library_mode, "source")
+        self.assertEqual(app._screen_title(), "MUSIC")
         ids = [entry[0] for entry in app._quick_menu_entries()]
         self.assertIn("drive_refresh", ids)
         self.assertIn("drive_download", ids)
         self.assertIn("drive_clear", ids)
+
+    def test_local_view_cycle_stays_local(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.library_mode = "favorite_playlists"
+        app.playlist_parent_mode = "playlists"
+        app.active_playlist = ""
+        app.selection = 0
+        app.scroll = 0
+        app.drive_loaded = False
+        with mock.patch.object(app, "_drive_refresh") as refresh:
+            app._cycle_library_mode()
+        self.assertEqual(app.library_mode, "all")
+        refresh.assert_not_called()
 
 
 if __name__ == "__main__":

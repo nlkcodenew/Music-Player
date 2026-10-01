@@ -93,7 +93,7 @@ class MusicPlayerApp:
         self.update_busy = False
         self.update_lock = threading.Lock()
         self.exit_confirmation = False
-        self.library_mode = "all"
+        self.library_mode = "source"
         self.playlist_parent_mode = "playlists"
         self.active_playlist = ""
         self.quick_menu = False
@@ -466,6 +466,8 @@ class MusicPlayerApp:
                 if not self.drive_stack:
                     self.drive_loaded = False
                 self._drive_refresh()
+            elif self.screen == "library" and self.library_mode != "source":
+                self._open_source()
             else:
                 self.exit_confirmation = True
             return
@@ -498,7 +500,12 @@ class MusicPlayerApp:
             return
         if action == "y":
             if self.screen == "library":
-                self._cycle_library_mode()
+                if self.library_mode == "drive":
+                    self._open_source()
+                elif self.library_mode == "source":
+                    self._open_drive()
+                else:
+                    self._cycle_library_mode()
             else:
                 values = ("off", "all", "one")
                 current = values.index(self.settings.get("repeat"))
@@ -509,6 +516,24 @@ class MusicPlayerApp:
                 get_logger().info("repeat mode changed=%s", repeat)
             return
         if self.screen == "library":
+            if self.library_mode == "source":
+                if action == "up":
+                    self.selection = max(0, self.selection - 1)
+                elif action == "down":
+                    self.selection = min(1, self.selection + 1)
+                elif action == "left":
+                    self.selection = 0
+                elif action == "right":
+                    self.selection = 1
+                elif action == "a":
+                    if self.selection == 1:
+                        self._open_drive()
+                    else:
+                        self.library_mode = "all"
+                        self.selection = 0
+                        self.scroll = 0
+                        get_logger().info("library mode=all")
+                return
             if self.library_mode == "drive":
                 rows = self._drive_rows()
                 if not rows:
@@ -962,8 +987,24 @@ class MusicPlayerApp:
             return [track for track in self.tracks if track.folder == self.active_playlist]
         return self.tracks
 
+    def _open_source(self):
+        self.library_mode = "source"
+        self.active_playlist = ""
+        self.selection = 0
+        self.scroll = 0
+        get_logger().info("library mode=source")
+
+    def _open_drive(self):
+        self.library_mode = "drive"
+        self.screen = "library"
+        self.selection = 0
+        self.scroll = 0
+        get_logger().info("library mode=drive")
+        if not getattr(self, "drive_loaded", False):
+            self._drive_refresh()
+
     def _cycle_library_mode(self):
-        modes = ("all", "favorites", "playlists", "favorite_playlists", "drive")
+        modes = ("all", "favorites", "playlists", "favorite_playlists")
         current = self.playlist_parent_mode if self.library_mode == "playlist_tracks" else self.library_mode
         if current not in modes:
             current = "all"
@@ -972,8 +1013,6 @@ class MusicPlayerApp:
         self.selection = 0
         self.scroll = 0
         get_logger().info("library mode=%s", self.library_mode)
-        if self.library_mode == "drive" and not getattr(self, "drive_loaded", False):
-            self._drive_refresh()
 
     def _drive_folder_id(self):
         try:
@@ -1210,6 +1249,8 @@ class MusicPlayerApp:
         return True
 
     def _toggle_favorite(self):
+        if getattr(self, "library_mode", "") == "source":
+            return
         if self.screen == "playing":
             track = self.player.current
             if not track:
@@ -1402,6 +1443,9 @@ class MusicPlayerApp:
         if getattr(self, "library_mode", "") == "drive":
             self._render_drive()
             return
+        if getattr(self, "library_mode", "") == "source":
+            self._render_source()
+            return
         entries = self._library_entries()
         if not entries:
             message = {
@@ -1460,6 +1504,30 @@ class MusicPlayerApp:
             if spec:
                 spec_width_px = self.measure(spec, "small")[0]
                 self.text(spec, self.width - 28 - spec_width_px, y + 5, "small", spec_color)
+            y += 52
+
+    def _render_source(self):
+        rows = [
+            ("LOCAL", "%d tracks on this device" % len(getattr(self, "tracks", []) or [])),
+            ("DRIVE", "Google Drive (online)"),
+        ]
+        try:
+            self.text(
+                self.ellipsize("Choose where your music plays from", self.width - 56, "small"),
+                28, 74, "small", self.MUTED,
+            )
+        except Exception:
+            pass
+        y = 104
+        for index, (title, detail) in enumerate(rows):
+            selected = index == getattr(self, "selection", 0)
+            if selected:
+                self.fill(18, y - 5, self.width - 36, 48, self.ACCENT)
+            color = self.ON_ACCENT if selected else self.TEXT
+            dim_color = self.ON_ACCENT if selected else self.MUTED
+            self.text(title, 32, y, "title", color)
+            detail_width = self.measure(detail, "small")[0]
+            self.text(detail, self.width - 32 - detail_width, y + 8, "small", dim_color)
             y += 52
 
     def _render_drive(self):
@@ -1760,7 +1828,9 @@ class MusicPlayerApp:
         self.text(state, 24, y + 18, "small", self.MUTED)
         if self.screen == "library":
             if getattr(self, "library_mode", "") == "drive":
-                hint = "A OPEN/PLAY  X DOWNLOAD  Y VIEW"
+                hint = "A OPEN/PLAY  X DOWNLOAD  Y MUSIC"
+            elif getattr(self, "library_mode", "") == "source":
+                hint = "A OPEN  Y DRIVE"
             else:
                 hint = "A OPEN/PLAY  X FAVORITE  Y VIEW"
         elif self.screen == "lyrics":
@@ -1798,11 +1868,14 @@ class MusicPlayerApp:
             "favorite_playlists": "FAVORITE PLAYLISTS",
             "playlist_tracks": self.active_playlist.upper(),
             "drive": "DRIVE",
+            "source": "MUSIC",
         }.get(self.library_mode, "LIBRARY")
 
     def _library_tracks(self):
         if getattr(self, "library_mode", "") == "drive":
             return [self._drive_track_for(item) for item in (getattr(self, "drive_entries", []) or []) if not item.is_folder]
+        if getattr(self, "library_mode", "") == "source":
+            return list(getattr(self, "tracks", []) or [])
         entries = self._library_entries()
         if self.library_mode in ("playlists", "favorite_playlists"):
             names = set(entries)
