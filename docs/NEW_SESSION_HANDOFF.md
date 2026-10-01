@@ -1,18 +1,20 @@
-# New-session handoff — Music Player v1.3.2
+# New-session handoff — Music Player v1.6.3 (Buoc A done, next: Buoc B Drive)
 
-> Updated 2026-09-26. Read this file and `docs/PROJECT_STATUS.md` first.
+> Updated 2026-10-02. Read this file, `docs/PROJECT_STATUS.md` and
+> `docs/STEP_A_DONE.md` first. Buoc B plan lives in
+> `docs/VISUALS_AND_DRIVE_PLAN.md` section 5 (Buoc B).
 
 ## Quick state
 
 - Repo: `https://github.com/nlkcodenew/Music-Player`.
 - Workspace: `E:\Trimiu Brick Pro\Project APPS\Music-Player`.
-- Branch: `main`.
-- Latest release: `v1.3.2`.
-- Feature commit/tag: `v1.3.2` release commit / `v1.3.2`.
-- Release: `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.3.2`.
-- 49/49 tests passed; both ZIPs verified with 31 entries and 31 OTA files.
-- Stock SHA-256: `0675ce83c712053be73b0435b2a9b468ed8a1688826e5a7d97c384086dcb3686`.
-- Spruce SHA-256: `d08275bc9a5209deac5c67ba36e3e9ff67b25798c7d4eddb46c8f37e031802a3`.
+- Branch: `main` (clean, pushed; latest commit `70bf487`, docs commit on top).
+- Latest release: `v1.6.3`.
+- Feature commit/tag: `70bf487` / `v1.6.3`.
+- Release: `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.6.3`.
+- 82/82 tests passed; both ZIPs verified with 34 entries and 34 OTA files.
+- Stock SHA-256: `156ab7840aa978b6db1e63d28657295bf700e890770b969ff324425af178cfb1`.
+- Spruce SHA-256: `048d5a617e2b0a3395655ec5393f5a39cedf28b44183aa4d446c7a8bc1e5f624`.
 
 ## What v1.3.2 changed
 
@@ -74,13 +76,22 @@ python tools/verify_release.py
 git diff --check
 ```
 
-## Suggested continuation prompt
+## Suggested continuation prompt (Buoc B — Google Drive)
 
 ```text
 Continue E:\Trimiu Brick Pro\Project APPS\Music-Player.
-Read docs/NEW_SESSION_HANDOFF.md and docs/PROJECT_STATUS.md first.
-Latest is v1.3.2 with stable MP-xxxxxxxx header ID and a credential-free HTTPS
-Issue relay. Auto-reporting defaults off. Do not place GitHub tokens or the
-private diagnostics repo in the app, manifest or ZIP, and do not overwrite user
-data during OTA.
+Read docs/NEW_SESSION_HANDOFF.md, docs/PROJECT_STATUS.md, docs/STEP_A_DONE.md
+and docs/VISUALS_AND_DRIVE_PLAN.md section 5 (Buoc B) first.
+Latest is v1.6.3, main is clean and pushed. Buoc A is closed — do not touch
+visuals/LED/UI unless Buoc B requires it.
+Task: implement Buoc B Drive — public folder 1KB8-kxt0QSpgBSQw4VMIQmYCGS3F2D2a
+(Anyone with link - Viewer). New module drive.py with paged folder browsing
+(small pageSize, files.list q=parents, minimal fields, audio only), disk cache,
+per-track streaming via uc?export=download without full scan (RAM-safe), plus
+download-to-Music/Drive/<Album> for offline. DRIVE library screen, folder link
+in settings via urllib + verified SSL, no tokens. Confirm with user whether to
+use a public API key or keyless download endpoints before coding. Standard gate:
+compileall, unittest, node --check, make_release, verify_release, git diff
+--check. Bump version, never retag. No GitHub tokens or private repo names in
+app/manifest/ZIP.
 ```
