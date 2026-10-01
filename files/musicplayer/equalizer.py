@@ -44,10 +44,15 @@ class Equalizer:
         self.mid_state = None
         self.errors = 0
         self.sample_rate = 48000
+        self.analyser = None
 
     @property
     def available(self):
         return audioop is not None and bool(self.runtime.Mix_SetPostMix)
+
+    @property
+    def tap_available(self):
+        return bool(getattr(self.runtime, "Mix_SetPostMix", None))
 
     @property
     def preset(self):
@@ -97,6 +102,15 @@ class Equalizer:
         self.sample_rate = max(8000, int(sample_rate))
         self.reset()
 
+    def attach_analyser(self, analyser):
+        self.analyser = analyser
+        self.sync()
+        return analyser
+
+    def detach_analyser(self):
+        self.analyser = None
+        self.sync()
+
     def _filter_weights(self, frequency):
         alpha = 1.0 - math.exp(-2.0 * math.pi * frequency / self.sample_rate)
         weight_a = max(1, min(999, round(alpha * 1000)))
@@ -104,7 +118,9 @@ class Equalizer:
 
     def sync(self):
         self.reset()
-        if self.gains == (0, 0, 0):
+        need_eq = self.gains != (0, 0, 0)
+        need_tap = self.analyser is not None
+        if not need_eq and not need_tap:
             self.uninstall()
             return True
         if self.installed:
@@ -114,7 +130,10 @@ class Equalizer:
     def install(self):
         if self.installed:
             return True
-        if not self.available:
+        if not self.tap_available:
+            return False
+        need_eq = self.gains != (0, 0, 0)
+        if need_eq and audioop is None and self.analyser is None:
             return False
 
         @POSTMIX_CALLBACK
@@ -122,6 +141,11 @@ class Equalizer:
             try:
                 source = ctypes.string_at(stream, length)
                 output = self.process(source)
+                if self.analyser is not None:
+                    try:
+                        self.analyser.offer(output if output else source)
+                    except Exception:
+                        pass
                 if output is not source:
                     ctypes.memmove(stream, output, min(length, len(output)))
             except Exception:
@@ -142,6 +166,8 @@ class Equalizer:
     def process(self, source):
         bass_db, mid_db, treble_db = self.gains
         if not source or (bass_db, mid_db, treble_db) == (0, 0, 0):
+            return source
+        if audioop is None:
             return source
         low_weights = self._filter_weights(250)
         mid_weights = self._filter_weights(4000)

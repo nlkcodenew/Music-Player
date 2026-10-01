@@ -5,6 +5,7 @@ import time
 from .audio_output import choose_audio_device
 from .equalizer import Equalizer
 from .logger import get_logger
+from .visuals import SpectrumAnalyser
 from .sdl_runtime import (
     AUDIO_S16SYS,
     MIX_INIT_FLAC,
@@ -49,6 +50,7 @@ class AudioPlayer:
         self.music_finished = False
         self.finished_callback = None
         self.last_state_log = 0.0
+        self.analyser = SpectrumAnalyser()
 
     def initialize(self):
         flags = MIX_INIT_FLAC | MIX_INIT_MP3 | MIX_INIT_OGG | MIX_INIT_OPUS
@@ -82,6 +84,8 @@ class AudioPlayer:
         spec = self.runtime.mixer_spec()
         self.sample_rate = spec[0] if spec else 44100
         self.equalizer.set_sample_rate(self.sample_rate)
+        self.analyser.set_sample_rate(self.sample_rate)
+        self.equalizer.attach_analyser(self.analyser)
         self._install_finished_callback()
         get_logger().info(
             "audio output=%s mode=%s devices=%s spec=%s",
@@ -139,6 +143,7 @@ class AudioPlayer:
         if hook and self.finished_callback:
             hook(None)
         self.finished_callback = None
+        self.equalizer.detach_analyser()
         self.equalizer.uninstall()
         if self.audio_ready:
             self.runtime.Mix_CloseAudio()
@@ -185,6 +190,7 @@ class AudioPlayer:
         self.position_base = 0.0
         self.paused_at = 0.0
         self.error = ""
+        self.analyser.reset()
         self.settings.set("last_track", track.path)
         get_logger().info(
             "playback started index=%d title=%r format=%s tracks=%d duration=%.3f repeat=%s shuffle=%s",
@@ -205,6 +211,10 @@ class AudioPlayer:
         self.music = None
         self.started = False
         self.music_finished = False
+        try:
+            self.analyser.decay()
+        except Exception:
+            pass
 
     def fade_stop(self, steps=10, delay=0.05):
         if not self.music:
@@ -230,6 +240,10 @@ class AudioPlayer:
             self.runtime.Mix_PauseMusic()
             self.paused_at = self.position_base
             get_logger().info("playback paused")
+            try:
+                self.analyser.decay()
+            except Exception:
+                pass
             return True
 
     def position(self):
@@ -302,6 +316,10 @@ class AudioPlayer:
 
     def update(self):
         if not self.audio_ready or not self.started or not self.music:
+            try:
+                self.analyser.decay()
+            except Exception:
+                pass
             return
         now = time.monotonic()
         if now - self.last_state_log >= 10.0:
@@ -317,6 +335,11 @@ class AudioPlayer:
         finished = self.music_finished
         if not getattr(self.runtime, "Mix_HookMusicFinished", None):
             finished = not self.runtime.Mix_PausedMusic() and not self.runtime.Mix_PlayingMusic()
+        try:
+            if self.runtime.Mix_PausedMusic():
+                self.analyser.decay()
+        except Exception:
+            pass
         if finished:
             self.music_finished = False
             track = self.current

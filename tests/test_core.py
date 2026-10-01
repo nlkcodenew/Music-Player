@@ -749,5 +749,158 @@ class AudioLogicTests(unittest.TestCase):
         self.assertEqual(player.next_index(True, automatic=True), 2)
 
 
+class VisualsTapTests(unittest.TestCase):
+    def test_flat_with_analyser_installs_visual_tap(self):
+        import struct
+        from musicplayer.equalizer import Equalizer
+        from musicplayer.visuals import SpectrumAnalyser
+        runtime = mock.Mock(Mix_SetPostMix=mock.Mock())
+        settings = mock.Mock()
+        values = {"eq_preset": "Flat", "eq_bass": 0, "eq_mid": 0, "eq_treble": 0}
+        settings.get.side_effect = values.get
+        settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        equalizer = Equalizer(runtime, settings)
+        self.assertTrue(equalizer.sync())
+        self.assertFalse(equalizer.installed)
+        analyser = SpectrumAnalyser()
+        equalizer.attach_analyser(analyser)
+        self.assertTrue(equalizer.installed)
+        runtime.Mix_SetPostMix.assert_called()
+        pcm = struct.pack("<512h", *([1200] * 256 + [-1200] * 256))
+        equalizer.analyser.offer(pcm)
+        levels, rms, _beat = equalizer.analyser.snapshot()
+        self.assertEqual(len(levels), 14)
+        self.assertGreater(rms, 0.0)
+        equalizer.detach_analyser()
+        self.assertFalse(equalizer.installed)
+
+    def test_analyser_decay_reduces_levels(self):
+        import struct
+        from musicplayer.visuals import SpectrumAnalyser
+        analyser = SpectrumAnalyser()
+        pcm = struct.pack("<512h", *([4000] * 512))
+        for _ in range(5):
+            analyser.offer(pcm)
+            analyser._last_tap = 0.0
+        before = list(analyser.snapshot()[0])
+        analyser.decay()
+        after = list(analyser.snapshot()[0])
+        self.assertTrue(any(a < b for a, b in zip(after, before)))
+
+    def test_audio_player_owns_analyser_and_resets(self):
+        from musicplayer.audio import AudioPlayer
+        from musicplayer.visuals import SpectrumAnalyser
+        runtime = mock.Mock(Mix_SetPostMix=mock.Mock())
+        values = {
+            "volume": 80, "audio_output": "system", "eq_preset": "Flat",
+            "eq_bass": 0, "eq_mid": 0, "eq_treble": 0,
+        }
+        settings = mock.Mock()
+        settings.get.side_effect = values.get
+        settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        player = AudioPlayer(runtime, [], settings)
+        self.assertIsInstance(player.analyser, SpectrumAnalyser)
+        player.analyser.levels = [0.9] * player.analyser.bands
+        player.stop()
+        self.assertTrue(all(v < 0.9 for v in player.analyser.levels))
+
+
+class LedControllerTests(unittest.TestCase):
+    def test_frame_for_levels_returns_rgb_hex(self):
+        from musicplayer.leds import frame_for_levels
+        frame = frame_for_levels([0.0, 0.5, 1.0], 0.1, False, 3)
+        self.assertEqual(len(frame), 18)
+        self.assertRegex(frame, r"^[0-9A-F]+$")
+        beat_frame = frame_for_levels([0.5] * 4, 0.2, True, 1)
+        self.assertIn("FFFFFF", beat_frame)
+
+    def test_controller_without_nodes_is_unavailable_but_safe(self):
+        from musicplayer.leds import LedController
+        leds = LedController(frame_path="/missing/frame_hex", effect_path="/missing/effect")
+        leds.frame_path = ""
+        leds.effect_path = ""
+        leds.enabled = False
+        self.assertFalse(leds.available)
+        self.assertFalse(leds.update([0.5] * 14, 0.1, False))
+        self.assertFalse(leds.suspend_engine())
+
+    def test_controller_suspend_restore_with_temp_files(self):
+        import tempfile
+        from musicplayer.leds import LedController
+        with tempfile.TemporaryDirectory() as root:
+            frame = os.path.join(root, "frame_hex")
+            effect = os.path.join(root, "effect_enable")
+            with open(frame, "w") as handle:
+                handle.write("")
+            with open(effect, "w") as handle:
+                handle.write("1")
+            leds = LedController(frame_path=frame, effect_path=effect)
+            self.assertTrue(leds.available)
+            self.assertTrue(leds.suspend_engine())
+            with open(effect) as handle:
+                self.assertEqual(handle.read(), "0")
+            self.assertTrue(leds.update([0.6] * 6, 0.2, False, force=True))
+            with open(frame) as handle:
+                self.assertEqual(len(handle.read()), 36)
+            self.assertTrue(leds.restore_engine())
+            self.assertTrue(leds.clear())
+
+
+class VisualSettingsTests(unittest.TestCase):
+    def test_visual_defaults_and_normalization(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "settings.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"led_mode": "bad", "spectrum": 1}, handle)
+            settings = Settings(path).load()
+        self.assertEqual(settings.get("led_mode"), "spectrum")
+        self.assertTrue(settings.get("spectrum"))
+        with tempfile.TemporaryDirectory() as root:
+            fresh = Settings(os.path.join(root, "settings.json")).load()
+        self.assertEqual(fresh.get("led_mode"), "spectrum")
+        self.assertTrue(fresh.get("spectrum"))
+
+    def test_quick_menu_cycles_led_and_spectrum(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {
+            "auto_report_errors": False, "audio_output": "auto",
+            "led_mode": "spectrum", "spectrum": True,
+        }
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        app.status = ""
+        app.status_error = False
+        labels = [entry[0] for entry in app._quick_menu_entries()]
+        self.assertIn("led_mode", labels)
+        self.assertIn("spectrum", labels)
+        app.quick_menu = True
+        app.quick_menu_page = "main"
+        app.quick_menu_selection = labels.index("led_mode")
+        app._handle_quick_menu("a")
+        self.assertEqual(values["led_mode"], "off")
+        app.quick_menu_selection = labels.index("spectrum")
+        app._handle_quick_menu("a")
+        self.assertFalse(values["spectrum"])
+
+    def test_update_visuals_respects_led_off(self):
+        from musicplayer.visuals import SpectrumAnalyser
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.player = mock.Mock()
+        app.player.analyser = SpectrumAnalyser()
+        app.leds = mock.Mock(available=True)
+        app.settings = mock.Mock()
+        app.settings.get.return_value = "off"
+        app._update_visuals()
+        app.leds.update.assert_not_called()
+        app.settings.get.return_value = "spectrum"
+        app._update_visuals()
+        app.leds.update.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

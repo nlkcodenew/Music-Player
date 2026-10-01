@@ -17,6 +17,8 @@ DEFAULTS = {
     "eq_treble": 0,
     "audio_output": "auto",
     "auto_report_errors": False,
+    "led_mode": "spectrum",
+    "spectrum": True,
 }
 
 
@@ -64,6 +66,9 @@ class Settings:
             self.values[key] = max(-6, min(6, int(self.values.get(key, 0))))
         if self.values.get("audio_output") not in ("auto", "system", "usb"):
             self.values["audio_output"] = "auto"
+        if self.values.get("led_mode") not in ("off", "beat", "spectrum"):
+            self.values["led_mode"] = "spectrum"
+        self.values["spectrum"] = bool(self.values.get("spectrum", True))
         return self
 
     def save(self):

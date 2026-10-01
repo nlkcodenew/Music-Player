@@ -9,6 +9,7 @@ from .collections import Collections
 from .display import DisplayController
 from .input import InputState
 from .identity import installation_id
+from .leds import LedController
 from .logger import get_logger
 from .lyrics import load_lyrics
 from .reporter import queue_report, retry_pending
@@ -77,6 +78,8 @@ class MusicPlayerApp:
         self.display = DisplayController(paths)
         self.lyrics_cache = {}
         self.exit_code = 0
+        self.leds = None
+        self._visual_state = ([0.0] * 14, 0.0, False)
 
     def initialize(self):
         self.display.restore()
@@ -112,6 +115,17 @@ class MusicPlayerApp:
         self._load_fonts()
         self.player = AudioPlayer(self.runtime, self.tracks, self.settings)
         self.player.initialize()
+        try:
+            self.leds = LedController()
+        except Exception as error:
+            get_logger().warning("LED controller unavailable: %s", error)
+            self.leds = None
+        if self.leds is not None:
+            try:
+                if self.leds.suspend_engine():
+                    get_logger().info("LED effect engine suspended for music visuals")
+            except Exception as error:
+                get_logger().warning("cannot suspend LED engine: %s", error)
         if self.player.output_warning:
             self.status = self.player.output_warning
             self.status_error = True
@@ -246,6 +260,16 @@ class MusicPlayerApp:
         threading.Thread(target=worker, name="diagnostic-upload", daemon=True).start()
 
     def cleanup(self):
+        if self.leds is not None:
+            try:
+                self.leds.restore_engine()
+            except Exception as error:
+                get_logger().warning("cannot restore LED engine: %s", error)
+            try:
+                self.leds.clear()
+            except Exception:
+                pass
+            self.leds = None
         self.display.restore()
         try:
             self.settings.save()
@@ -287,6 +311,7 @@ class MusicPlayerApp:
                         self._handle(action)
                 self._update_sleep_timer()
                 self.player.update()
+                self._update_visuals()
                 if self.player.error:
                     self.status = self.player.error
                     self.status_error = True
@@ -418,6 +443,8 @@ class MusicPlayerApp:
                 "audio_output",
                 "Audio Output: %s" % output_mode_label(self.settings.get("audio_output")),
             ),
+            ("led_mode", "LED Mode: %s" % str(self.settings.get("led_mode")).title()),
+            ("spectrum", "Spectrum: %s" % ("On" if self.settings.get("spectrum") else "Off")),
             ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
             ("screen_off", "Screen-off Playback"),
             ("background", "Background Playback (Return to OS)"),
@@ -461,6 +488,9 @@ class MusicPlayerApp:
         if selected == "audio_output" and action in ("left", "right"):
             self._cycle_audio_output(-1 if action == "left" else 1)
             return
+        if selected == "led_mode" and action in ("left", "right"):
+            self._cycle_led_mode(-1 if action == "left" else 1)
+            return
         if action != "a":
             return
         if selected == "lyrics":
@@ -476,6 +506,10 @@ class MusicPlayerApp:
             self.quick_menu_selection = 0
         elif selected == "audio_output":
             self._cycle_audio_output(1)
+        elif selected == "led_mode":
+            self._cycle_led_mode(1)
+        elif selected == "spectrum":
+            self._toggle_spectrum()
         elif selected == "sleep":
             self._cycle_sleep_timer(1)
         elif selected == "screen_off":
@@ -571,6 +605,63 @@ class MusicPlayerApp:
             self.player.fade_stop()
             self.status = "Sleep Timer finished (%s)" % label
             self.status_error = False
+
+    def _visual_snapshot(self):
+        analyser = getattr(getattr(self, "player", None), "analyser", None)
+        if analyser is None:
+            return self._visual_state
+        try:
+            levels, rms, beat = analyser.snapshot()
+        except Exception:
+            return self._visual_state
+        self._visual_state = (tuple(levels), rms, beat)
+        return self._visual_state
+
+    def _update_visuals(self):
+        levels, rms, beat = self._visual_snapshot()
+        leds = getattr(self, "leds", None)
+        if leds is None or not getattr(leds, "available", False):
+            return
+        try:
+            mode = self.settings.get("led_mode")
+        except Exception:
+            mode = "spectrum"
+        if mode == "off":
+            return
+        if mode == "beat" and not beat:
+            return
+        try:
+            leds.update(levels, rms, beat)
+        except Exception:
+            pass
+
+    def _cycle_led_mode(self, step=1):
+        modes = ("off", "beat", "spectrum")
+        try:
+            current = self.settings.get("led_mode")
+        except Exception:
+            current = "spectrum"
+        if current not in modes:
+            current = "spectrum"
+        mode = modes[(modes.index(current) + step) % len(modes)]
+        self.settings.set("led_mode", mode)
+        self.settings.save()
+        self.status = "LED Mode: %s" % mode.title()
+        self.status_error = False
+        get_logger().info("LED mode changed=%s", mode)
+        return mode
+
+    def _toggle_spectrum(self):
+        try:
+            enabled = not self.settings.get("spectrum")
+        except Exception:
+            enabled = True
+        self.settings.set("spectrum", enabled)
+        self.settings.save()
+        self.status = "Spectrum: %s" % ("On" if enabled else "Off")
+        self.status_error = False
+        get_logger().info("spectrum display=%s", "on" if enabled else "off")
+        return enabled
 
     def _lyrics_document(self):
         track = self.player.current
@@ -793,12 +884,41 @@ class MusicPlayerApp:
         elapsed = self._format_time(position)
         total = self._format_time(duration) if duration else "--:--"
         self.text("%s / %s" % (elapsed, total), self.width // 2, center_y + 55, "body", center=True)
+        self._render_spectrum(center_y + 92)
         state = "PAUSED" if self.runtime.Mix_PausedMusic() else "PLAYING"
-        self.text(state, self.width // 2, center_y + 105, "small", self.ACCENT, center=True)
+        self.text(state, self.width // 2, center_y + 150, "small", self.ACCENT, center=True)
         button = "A  RESUME" if self.runtime.Mix_PausedMusic() else "A  PAUSE"
         button_width = 210
-        self.fill(self.width // 2 - button_width // 2, center_y + 145, button_width, 48, self.ACCENT)
-        self.text(button, self.width // 2, center_y + 154, "body", self.BG, center=True)
+        self.fill(self.width // 2 - button_width // 2, center_y + 185, button_width, 48, self.ACCENT)
+        self.text(button, self.width // 2, center_y + 194, "body", self.BG, center=True)
+
+    def _render_spectrum(self, baseline_y):
+        try:
+            enabled = bool(self.settings.get("spectrum"))
+        except Exception:
+            enabled = True
+        if not enabled:
+            return
+        levels, _rms, beat = self._visual_snapshot()
+        if not levels:
+            return
+        count = len(levels)
+        area_x = 80
+        area_w = max(120, self.width - 160)
+        gap = 6 if count <= 14 else 4
+        bar_w = max(4, (area_w - gap * (count - 1)) // count)
+        total_w = bar_w * count + gap * (count - 1)
+        start_x = area_x + (area_w - total_w) // 2
+        max_h = 44
+        color = self.TEXT if beat else self.ACCENT
+        for index, raw in enumerate(levels):
+            try:
+                level = max(0.0, min(1.0, float(raw)))
+            except (TypeError, ValueError):
+                level = 0.0
+            height = int(level * max_h) + (2 if level > 0.02 else 0)
+            x = start_x + index * (bar_w + gap)
+            self.fill(x, baseline_y - height, bar_w, height, color)
 
     def _render_lyrics(self):
         track = self.player.current
