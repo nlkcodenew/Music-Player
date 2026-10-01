@@ -497,10 +497,10 @@ class MusicPlayerApp:
                 self.screen = "playing"
             return
         if action == "l2":
-            self._bump_app_volume(-5)
+            self._toggle_shuffle()
             return
         if action == "r2":
-            self._bump_app_volume(5)
+            self._cycle_repeat()
             return
         if action == "x":
             if self.screen == "lyrics":
@@ -522,13 +522,7 @@ class MusicPlayerApp:
                 else:
                     self._cycle_library_mode()
             else:
-                values = ("off", "all", "one")
-                current = values.index(self.settings.get("repeat"))
-                repeat = values[(current + 1) % len(values)]
-                self.settings.set("repeat", repeat)
-                self.status = "Repeat: %s" % repeat.title()
-                self.status_error = False
-                get_logger().info("repeat mode changed=%s", repeat)
+                self._cycle_repeat()
             return
         if self.screen == "library":
             if self.library_mode == "source":
@@ -631,7 +625,6 @@ class MusicPlayerApp:
                 "Audio Output: %s" % output_mode_label(self.settings.get("audio_output")),
             ),
             ("led_mode", "LED Mode: %s" % str(self.settings.get("led_mode")).title()),
-            ("led_test", "LED Test: %s" % self._led_test_label()),
             ("spectrum", "Spectrum: %s" % ("On" if self.settings.get("spectrum") else "Off")),
             ("intro", "Intro: %s" % ("On" if self.settings.get("intro") else "Off")),
             ("drive_refresh", "Drive Refresh"),
@@ -691,12 +684,6 @@ class MusicPlayerApp:
         if selected == "led_mode" and action in ("left", "right"):
             self._cycle_led_mode(-1 if action == "left" else 1)
             return
-        if selected == "led_test" and action in ("left", "right"):
-            if getattr(getattr(self, "leds", None), "test_index", -1) < 0:
-                self._toggle_led_test()
-            else:
-                self._step_led_test(-1 if action == "left" else 1)
-            return
         if action != "a":
             return
         if selected == "lyrics":
@@ -714,8 +701,6 @@ class MusicPlayerApp:
             self._cycle_audio_output(1)
         elif selected == "led_mode":
             self._cycle_led_mode(1)
-        elif selected == "led_test":
-            self._toggle_led_test()
         elif selected == "spectrum":
             self._toggle_spectrum()
         elif selected == "intro":
@@ -828,19 +813,31 @@ class MusicPlayerApp:
         self.status_error = False
         get_logger().info("audio output preference=%s", mode)
 
-    def _bump_app_volume(self, delta):
+    def _toggle_shuffle(self):
         try:
-            current = int(self.settings.get("volume"))
-        except (TypeError, ValueError):
-            current = 80
-        self.player.set_volume(current + delta)
-        try:
-            applied = int(self.settings.get("volume"))
-        except (TypeError, ValueError):
-            applied = max(0, min(100, current + delta))
-        self.status = "App volume: %d%% (device buttons control OS volume)" % applied
+            enabled = not self.settings.get("shuffle")
+        except Exception:
+            enabled = True
+        self.settings.set("shuffle", enabled)
+        self.settings.save()
+        self.status = "Shuffle: %s" % ("On" if enabled else "Off")
         self.status_error = False
-        get_logger().info("app volume=%d", applied)
+        get_logger().info("shuffle=%s", "on" if enabled else "off")
+        return enabled
+
+    def _cycle_repeat(self):
+        values = ("off", "all", "one")
+        try:
+            current = self.settings.get("repeat")
+        except Exception:
+            current = "off"
+        repeat = values[(values.index(current) + 1) % len(values)] if current in values else "off"
+        self.settings.set("repeat", repeat)
+        self.settings.save()
+        self.status = "Repeat: %s" % repeat.title()
+        self.status_error = False
+        get_logger().info("repeat mode changed=%s", repeat)
+        return repeat
 
     def _cycle_sleep_timer(self, step):
         track = self.player.current

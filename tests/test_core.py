@@ -1184,22 +1184,29 @@ class TruepodStyleTests(unittest.TestCase):
         self.assertIn("repeat all", line)
         self.assertNotIn("vol", line)
 
-    def test_app_volume_bump_reports_and_clamps(self):
+    def test_l2_r2_control_shuffle_and_repeat(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
-        values = {"volume": 98}
+        values = {"shuffle": False, "repeat": "off"}
         app.settings = mock.Mock()
         app.settings.get.side_effect = values.get
         app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
-        app.player = mock.Mock()
-        app.player.set_volume.side_effect = lambda volume: values.__setitem__(
-            "volume", max(0, min(100, volume))
-        )
+        app.update_busy = False
+        app.quick_menu = False
+        app.exit_confirmation = False
+        app.screen = "playing"
         app.status = ""
         app.status_error = True
-        app._bump_app_volume(5)
-        self.assertEqual(values["volume"], 100)
-        self.assertIn("App volume: 100%", app.status)
-        self.assertFalse(app.status_error)
+        app._handle("l2")
+        self.assertTrue(values["shuffle"])
+        self.assertIn("Shuffle: On", app.status)
+        app._handle("r2")
+        self.assertEqual(values["repeat"], "all")
+        self.assertIn("Repeat: All", app.status)
+        app._handle("r2")
+        self.assertEqual(values["repeat"], "one")
+        app._handle("y")
+        self.assertEqual(values["repeat"], "off")
+        app.settings.save.assert_called()
 
 
     def test_spectrum_gamma_lengthens_mid_levels(self):
@@ -1407,7 +1414,7 @@ class OtaRecheckTests(unittest.TestCase):
         self.assertEqual(app._step_led_test(1), 1)
         self.assertIn("2/23", app.status)
 
-    def test_quick_menu_lists_led_test(self):
+    def test_quick_menu_hides_led_test(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
         values = {"auto_report_errors": False, "audio_output": "auto",
                   "led_mode": "spectrum", "spectrum": True}
@@ -1418,8 +1425,10 @@ class OtaRecheckTests(unittest.TestCase):
         app.leds = mock.Mock(test_index=-1)
         app.sleep_timer = SleepTimer()
         app.update_manifest = None
+        app.paths = mock.Mock(app_dir="/app", data_dir="/nope")
         ids = [entry[0] for entry in app._quick_menu_entries()]
-        self.assertIn("led_test", ids)
+        self.assertNotIn("led_test", ids)
+        self.assertIn("led_mode", ids)
 
 
 class DriveTests(unittest.TestCase):
