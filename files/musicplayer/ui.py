@@ -1393,6 +1393,10 @@ class MusicPlayerApp:
                 center = index / 2.0
                 if abs(sweep - center * 0.9) < 0.18:
                     self.text(letter, x, center_y - 30, "hero", self.ON_ACCENT)
+        try:
+            self.runtime.SDL_RenderPresent(self.renderer)
+        except Exception as error:
+            get_logger().warning("intro present failed: %s", error)
 
     def _render_library(self):
         if getattr(self, "library_mode", "") == "drive":

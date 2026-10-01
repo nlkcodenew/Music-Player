@@ -1076,9 +1076,12 @@ class TruepodStyleTests(unittest.TestCase):
         app.text = lambda *args, **kwargs: drawn.append(args[0])
         app.fill = lambda *args: None
         app.measure = lambda *args, **kwargs: (40, 40)
+        app.runtime = mock.Mock()
+        app.renderer = mock.Mock()
         app._render_intro_frame(1.0)
         letters = [letter for letter in drawn if letter in ("N", "L", "K")]
         self.assertEqual(letters[:3], ["N", "L", "K"])
+        app.runtime.SDL_RenderPresent.assert_called_with(app.renderer)
         app.runtime = mock.Mock()
         app.runtime.SDL_PollEvent.return_value = 0
         app.input = mock.Mock()
