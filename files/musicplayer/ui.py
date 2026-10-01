@@ -1032,7 +1032,7 @@ class MusicPlayerApp:
         spec_base = status_top - 20
         max_h = status_top - content_bottom - 32
         max_h = max(64, min(220, max_h))
-        self._render_spectrum(spec_base, max_h, gain=1.6)
+        self._render_spectrum(spec_base, max_h, gain=2.0)
 
     def _format_line(self, track, source_rate, source_bits, output_rate):
         try:
@@ -1075,7 +1075,7 @@ class MusicPlayerApp:
             volume = 0
         return "%s   X shuffle %s   Y repeat %s   vol %d" % (state, shuffle, repeat, volume)
 
-    def _render_spectrum(self, baseline_y, max_h=160, gain=1.6):
+    def _render_spectrum(self, baseline_y, max_h=160, gain=2.0):
         try:
             enabled = bool(self.settings.get("spectrum"))
         except Exception:
@@ -1088,7 +1088,7 @@ class MusicPlayerApp:
         try:
             gain_value = max(1.0, min(3.0, float(gain)))
         except (TypeError, ValueError):
-            gain_value = 1.6
+            gain_value = 2.0
         if not levels:
             return
         try:
@@ -1108,11 +1108,13 @@ class MusicPlayerApp:
         dark = self.ACCENT_DIM
         for index, raw in enumerate(levels):
             try:
-                level = max(0.0, min(1.0, float(raw) * gain_value))
+                boosted = max(0.0, float(raw) * gain_value) ** 0.75
+                level = max(0.0, min(1.0, boosted))
             except (TypeError, ValueError):
                 level = 0.0
             try:
-                peak = max(0.0, min(1.0, float(peaks[index]) * gain_value))
+                boosted_peak = max(0.0, float(peaks[index]) * gain_value) ** 0.75
+                peak = max(0.0, min(1.0, boosted_peak))
             except (IndexError, TypeError, ValueError):
                 peak = level
             peak = max(peak, level)

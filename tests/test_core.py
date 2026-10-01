@@ -1021,6 +1021,23 @@ class TruepodStyleTests(unittest.TestCase):
         self.assertIn("vol 14", line)
 
 
+    def test_spectrum_gamma_lengthens_mid_levels(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.width = 640
+        app.height = 480
+        app.settings = mock.Mock()
+        app.settings.get.return_value = True
+        app.player = mock.Mock()
+        app.player.analyser = mock.Mock()
+        app.player.analyser.peaks = [0.25] * 14
+        app._visual_snapshot = mock.Mock(return_value=([0.25] * 14, 0.1, False))
+        calls = []
+        app.fill = lambda x, y, w, h, color: calls.append((x, y, w, h))
+        app._render_spectrum(400, 160, gain=2.0)
+        heights = [call[3] for call in calls]
+        linear_total = int(0.25 * 2.0 * 160) + 2
+        self.assertGreater(max(heights), int(linear_total * 0.5))
+
     def test_spectrum_gain_boosts_quiet_levels(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
         app.width = 640
