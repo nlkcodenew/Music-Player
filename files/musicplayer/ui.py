@@ -1,5 +1,6 @@
 import ctypes
 import threading
+import time
 
 from . import APP_VERSION
 from .audio import AudioPlayer
@@ -17,6 +18,10 @@ from .reporter import queue_report, retry_pending
 from .settings import Settings
 from .sleep_timer import SleepTimer
 from .sdl_runtime import (
+    MIX_INIT_FLAC,
+    MIX_INIT_MP3,
+    MIX_INIT_OGG,
+    MIX_INIT_OPUS,
     SDL_Color,
     SDL_DisplayMode,
     SDL_Event,
@@ -84,6 +89,8 @@ class MusicPlayerApp:
         self.exit_code = 0
         self.leds = None
         self._visual_state = ([0.0] * 14, 0.0, False)
+        self.next_update_check = 0.0
+        self.update_check_interval = 900.0
 
     def initialize(self):
         self.display.restore()
@@ -137,6 +144,7 @@ class MusicPlayerApp:
         self._resume_background_playback()
         if self.settings.get("auto_update"):
             threading.Thread(target=self._check_update, name="ota-check", daemon=True).start()
+            self.next_update_check = time.monotonic() + self.update_check_interval
 
     def _load_fonts(self):
         candidates = font_candidates(self.paths)
@@ -192,7 +200,7 @@ class MusicPlayerApp:
             index, position, bool(resume.get("paused")),
         )
 
-    def _check_update(self):
+    def _check_update(self, manual=False):
         try:
             manifest = fetch_manifest(self.paths)
             if update_available(manifest) and manifest.get("version") != self.settings.get("skipped_version"):
@@ -200,8 +208,70 @@ class MusicPlayerApp:
                     self.update_manifest = manifest
                     self.status = "Update v%s available - open SELECT menu to install" % manifest["version"]
                     self.status_error = False
+            elif manual:
+                with self.update_lock:
+                    self.status = "Already on latest v%s" % APP_VERSION
+                    self.status_error = False
         except Exception as error:
             get_logger().warning("OTA check failed: %s", error)
+            if manual:
+                with self.update_lock:
+                    self.status = "Update check failed; turn Wi-Fi on and retry"
+                    self.status_error = True
+        finally:
+            try:
+                self.next_update_check = time.monotonic() + self.update_check_interval
+            except Exception:
+                pass
+
+    def _maybe_check_update(self):
+        try:
+            enabled = bool(self.settings.get("auto_update"))
+        except Exception:
+            enabled = False
+        if not enabled or self.update_busy:
+            return
+        try:
+            due = time.monotonic() >= self.next_update_check
+        except Exception:
+            due = False
+        if not due:
+            return
+        self.next_update_check = time.monotonic() + self.update_check_interval
+        threading.Thread(target=self._check_update, name="ota-check", daemon=True).start()
+
+    def _check_update_now(self):
+        with self.update_lock:
+            if self.update_busy:
+                return
+        self.status = "Checking for update..."
+        self.status_error = False
+        threading.Thread(
+            target=self._check_update, kwargs={"manual": True},
+            name="ota-check-manual", daemon=True,
+        ).start()
+
+    def _audio_info_line(self):
+        try:
+            flags = int(getattr(self.player, "available_decoders", 0) or 0)
+        except (TypeError, ValueError):
+            flags = 0
+        names = []
+        for bit, name in (
+            (MIX_INIT_FLAC, "FLAC"), (MIX_INIT_MP3, "MP3"),
+            (MIX_INIT_OGG, "OGG"), (MIX_INIT_OPUS, "OPUS"),
+        ):
+            if flags & bit:
+                names.append(name)
+        decoders = "+".join(names) if names else "no optional decoders"
+        try:
+            output = getattr(self.player, "output_device", "") or "unknown output"
+            rate = int(getattr(self.player, "sample_rate", 0) or 0)
+        except (TypeError, ValueError):
+            output, rate = "unknown output", 0
+        if rate:
+            return "Audio: %s | %s %dHz" % (decoders, output, rate)
+        return "Audio: %s | %s" % (decoders, output)
 
     def _install_update(self):
         with self.update_lock:
@@ -316,6 +386,7 @@ class MusicPlayerApp:
                 self._update_sleep_timer()
                 self.player.update()
                 self._update_visuals()
+                self._maybe_check_update()
                 if self.player.error:
                     self.status = self.player.error
                     self.status_error = True
@@ -449,6 +520,8 @@ class MusicPlayerApp:
             ),
             ("led_mode", "LED Mode: %s" % str(self.settings.get("led_mode")).title()),
             ("spectrum", "Spectrum: %s" % ("On" if self.settings.get("spectrum") else "Off")),
+            ("audio_info", "Audio Info"),
+            ("check_update", "Check for Update"),
             ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
             ("screen_off", "Screen-off Playback"),
             ("background", "Background Playback (Return to OS)"),
@@ -514,6 +587,11 @@ class MusicPlayerApp:
             self._cycle_led_mode(1)
         elif selected == "spectrum":
             self._toggle_spectrum()
+        elif selected == "audio_info":
+            self.status = self._audio_info_line()
+            self.status_error = False
+        elif selected == "check_update":
+            self._check_update_now()
         elif selected == "sleep":
             self._cycle_sleep_timer(1)
         elif selected == "screen_off":

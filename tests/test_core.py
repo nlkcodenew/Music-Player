@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -1047,6 +1048,82 @@ class TruepodStyleTests(unittest.TestCase):
         app2._render_spectrum(400, 160)
         self.assertEqual(fills, [])
         app2._visual_snapshot.assert_not_called()
+
+
+class OtaRecheckTests(unittest.TestCase):
+    def _app(self, auto_update=True):
+        from musicplayer.sdl_runtime import MIX_INIT_FLAC, MIX_INIT_MP3
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"auto_update": auto_update, "skipped_version": ""}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.update_lock = threading.Lock()
+        app.update_busy = False
+        app.update_manifest = None
+        app.status = ""
+        app.status_error = False
+        app.next_update_check = 0.0
+        app.update_check_interval = 900.0
+        app.paths = mock.Mock()
+        app.player = mock.Mock(available_decoders=0, output_device="", sample_rate=0)
+        return app
+
+    def test_periodic_check_fires_when_due(self):
+        import musicplayer.ui as ui_module
+        app = self._app()
+        with mock.patch.object(ui_module.threading, "Thread") as thread:
+            app._maybe_check_update()
+        thread.assert_called_once()
+        self.assertGreater(app.next_update_check, 0.0)
+
+    def test_periodic_check_skipped_when_disabled_or_not_due(self):
+        import musicplayer.ui as ui_module
+        app = self._app(auto_update=False)
+        with mock.patch.object(ui_module.threading, "Thread") as thread:
+            app._maybe_check_update()
+        thread.assert_not_called()
+        app2 = self._app()
+        app2.next_update_check = 999999999.0
+        with mock.patch.object(ui_module.threading, "Thread") as thread:
+            app2._maybe_check_update()
+        thread.assert_not_called()
+
+    def test_manual_check_reports_latest_and_failure(self):
+        import musicplayer.ui as ui_module
+        app = self._app()
+        with mock.patch.object(ui_module, "fetch_manifest", return_value={"version": APP_VERSION}), \
+                mock.patch.object(ui_module, "update_available", return_value=False):
+            app._check_update(manual=True)
+        self.assertIn("Already on latest", app.status)
+        self.assertFalse(app.status_error)
+        with mock.patch.object(ui_module, "fetch_manifest", side_effect=RuntimeError("offline")):
+            app._check_update(manual=True)
+        self.assertTrue(app.status_error)
+        self.assertIn("Wi-Fi", app.status)
+
+    def test_audio_info_line_lists_decoders_and_output(self):
+        from musicplayer.sdl_runtime import MIX_INIT_FLAC, MIX_INIT_MP3, MIX_INIT_OGG
+        app = self._app()
+        app.player = mock.Mock(
+            available_decoders=MIX_INIT_FLAC | MIX_INIT_MP3 | MIX_INIT_OGG,
+            output_device="FiiO USB DAC", sample_rate=48000,
+        )
+        line = app._audio_info_line()
+        self.assertIn("FLAC", line)
+        self.assertIn("MP3", line)
+        self.assertIn("USB DAC", line)
+        self.assertIn("48000", line)
+
+    def test_quick_menu_has_update_and_audio_entries(self):
+        app = self._app()
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        ids = [entry[0] for entry in app._quick_menu_entries()]
+        self.assertIn("check_update", ids)
+        self.assertIn("audio_info", ids)
 
 
 if __name__ == "__main__":
