@@ -483,10 +483,10 @@ class MusicPlayerApp:
                 self.screen = "playing"
             return
         if action == "l2":
-            self.player.set_volume(int(self.settings.get("volume")) - 5)
+            self._bump_app_volume(-5)
             return
         if action == "r2":
-            self.player.set_volume(int(self.settings.get("volume")) + 5)
+            self._bump_app_volume(5)
             return
         if action == "x":
             if self.screen == "lyrics":
@@ -809,6 +809,20 @@ class MusicPlayerApp:
         self.status_error = False
         get_logger().info("audio output preference=%s", mode)
 
+    def _bump_app_volume(self, delta):
+        try:
+            current = int(self.settings.get("volume"))
+        except (TypeError, ValueError):
+            current = 80
+        self.player.set_volume(current + delta)
+        try:
+            applied = int(self.settings.get("volume"))
+        except (TypeError, ValueError):
+            applied = max(0, min(100, current + delta))
+        self.status = "App volume: %d%% (device buttons control OS volume)" % applied
+        self.status_error = False
+        get_logger().info("app volume=%d", applied)
+
     def _cycle_sleep_timer(self, step):
         track = self.player.current
         next_index = (self.sleep_timer.preset_index + step) % 7
@@ -1107,9 +1121,7 @@ class MusicPlayerApp:
         self.drive_page_token = token
         self.drive_loaded = True
         self.selection = min(getattr(self, "selection", 0), max(0, len(self._drive_rows()) - 1))
-        self.status = "Drive: %d items%s" % (
-            len(self.drive_entries), " (more...)" if token else "",
-        )
+        self.status = "Drive: %d items - X saves songs to device" % len(self.drive_entries)
         self.status_error = False
         get_logger().info(
             "drive list folder=%s items=%d more=%s", folder_id, len(entries), bool(token),
@@ -1233,7 +1245,7 @@ class MusicPlayerApp:
             self.status_error = True
             get_logger().warning("drive download failed: %s", error)
             return False
-        self.status = "Saved %s" % destination[len(music_dir):].lstrip("/\\")
+        self.status = "Saved to device%s - find it in LOCAL" % destination[len(music_dir):].lstrip("/\\")
         self.status_error = False
         get_logger().info("drive offline saved=%s", destination)
         try:
@@ -1669,11 +1681,7 @@ class MusicPlayerApp:
             repeat = self.settings.get("repeat")
         except Exception:
             repeat = "off"
-        try:
-            volume = int(self.settings.get("volume"))
-        except Exception:
-            volume = 0
-        return "%s   X shuffle %s   Y repeat %s   vol %d" % (state, shuffle, repeat, volume)
+        return "%s   X shuffle %s   Y repeat %s" % (state, shuffle, repeat)
 
     def _render_spectrum(self, baseline_y, max_h=160, gain=3.0):
         try:
@@ -1812,16 +1820,16 @@ class MusicPlayerApp:
         y = self.height - footer_height
         self.fill(0, y, self.width, footer_height, self.PANEL)
         self.fill(0, y, self.width, 2, self.ACCENT)
-        state = "SHUFFLE %s   REPEAT %s   VOL %d%%" % (
+        state = "SHUFFLE %s   REPEAT %s" % (
             "ON" if self.settings.get("shuffle") else "OFF",
-            str(self.settings.get("repeat")).upper(), self.settings.get("volume"),
+            str(self.settings.get("repeat")).upper(),
         )
         if self.sleep_timer.active:
             state += "   SLEEP %s" % self.sleep_timer.status()
         self.text(state, 24, y + 18, "small", self.MUTED)
         if self.screen == "library":
             if getattr(self, "library_mode", "") == "drive":
-                hint = "A OPEN/PLAY  X DOWNLOAD  Y MUSIC"
+                hint = "A PLAY  X SAVE TO DEVICE  Y MUSIC"
             elif getattr(self, "library_mode", "") == "source":
                 hint = "A OPEN  Y DRIVE"
             else:

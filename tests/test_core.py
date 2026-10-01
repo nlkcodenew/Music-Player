@@ -1181,7 +1181,24 @@ class TruepodStyleTests(unittest.TestCase):
         self.assertIn("Playing", line)
         self.assertIn("shuffle off", line)
         self.assertIn("repeat all", line)
-        self.assertIn("vol 14", line)
+        self.assertNotIn("vol", line)
+
+    def test_app_volume_bump_reports_and_clamps(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"volume": 98}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.player = mock.Mock()
+        app.player.set_volume.side_effect = lambda volume: values.__setitem__(
+            "volume", max(0, min(100, volume))
+        )
+        app.status = ""
+        app.status_error = True
+        app._bump_app_volume(5)
+        self.assertEqual(values["volume"], 100)
+        self.assertIn("App volume: 100%", app.status)
+        self.assertFalse(app.status_error)
 
 
     def test_spectrum_gamma_lengthens_mid_levels(self):
