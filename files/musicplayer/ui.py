@@ -82,6 +82,7 @@ class MusicPlayerApp:
         self.active_playlist = ""
         self.quick_menu = False
         self.quick_menu_selection = 0
+        self.quick_menu_scroll = 0
         self.quick_menu_page = "main"
         self.sleep_timer = SleepTimer()
         self.display = DisplayController(paths)
@@ -90,7 +91,7 @@ class MusicPlayerApp:
         self.leds = None
         self._visual_state = ([0.0] * 14, 0.0, False)
         self.next_update_check = 0.0
-        self.update_check_interval = 900.0
+        self.update_check_interval = 300.0
 
     def initialize(self):
         self.display.restore()
@@ -417,6 +418,7 @@ class MusicPlayerApp:
         if action == "select":
             self.quick_menu = True
             self.quick_menu_selection = 0
+            self.quick_menu_scroll = 0
             self.quick_menu_page = "main"
             return
         if action == "start":
@@ -501,6 +503,21 @@ class MusicPlayerApp:
             elif action == "right":
                 self.player.seek(10)
 
+    def _quick_menu_visible_rows(self):
+        return max(3, (self.height - 220) // 52)
+
+    def _quick_menu_clamp_scroll(self):
+        entries = self._quick_menu_entries()
+        visible = self._quick_menu_visible_rows()
+        scroll = getattr(self, "quick_menu_scroll", 0)
+        scroll = max(0, min(scroll, max(0, len(entries) - visible)))
+        if self.quick_menu_selection < scroll:
+            scroll = self.quick_menu_selection
+        elif self.quick_menu_selection >= scroll + visible:
+            scroll = self.quick_menu_selection - visible + 1
+        self.quick_menu_scroll = scroll
+        return scroll
+
     def _quick_menu_entries(self):
         if getattr(self, "quick_menu_page", "main") == "equalizer":
             bass, mid, treble = self.player.equalizer.gains
@@ -551,9 +568,11 @@ class MusicPlayerApp:
             return
         if action == "up":
             self.quick_menu_selection = (self.quick_menu_selection - 1) % len(entries)
+            self._quick_menu_clamp_scroll()
             return
         if action == "down":
             self.quick_menu_selection = (self.quick_menu_selection + 1) % len(entries)
+            self._quick_menu_clamp_scroll()
             return
         selected = entries[self.quick_menu_selection][0]
         if getattr(self, "quick_menu_page", "main") == "equalizer":
@@ -982,24 +1001,24 @@ class MusicPlayerApp:
         center_x = self.width // 2
         max_w = max(200, self.width - 80)
         title_text, title_font = self._fit_title(track.title, max_w)
-        title_y = 78
+        title_y = 70
         self.text(title_text, center_x, title_y, title_font, center=True)
         try:
             folder_text = self.ellipsize(track.folder or "", max_w, "small")
         except Exception:
             folder_text = track.folder or ""
-        self.text(folder_text, center_x, title_y + 42, "small", self.MUTED, center=True)
+        self.text(folder_text, center_x, title_y + 36, "small", self.MUTED, center=True)
         position = self.player.position()
         duration = self.player.duration()
         bar_x = 60
         bar_w = max(120, self.width - 120)
-        prog_y = title_y + 76
+        prog_y = title_y + 64
         self.fill(bar_x, prog_y, bar_w, 8, self.PANEL)
         ratio = min(1.0, position / duration) if duration > 0 else 0.0
         self.fill(bar_x, prog_y, int(bar_w * ratio), 8, self.ACCENT)
         elapsed = self._format_time(position)
         total = self._format_time(duration) if duration else "--:--"
-        times_y = prog_y + 12
+        times_y = prog_y + 10
         self.text(elapsed, bar_x, times_y, "small", self.MUTED)
         total_width = self.measure(total, "small")[0]
         self.text(total, bar_x + bar_w - total_width, times_y, "small", self.MUTED)
@@ -1011,7 +1030,7 @@ class MusicPlayerApp:
             output_rate = int(getattr(getattr(self.player, "equalizer", None), "sample_rate", 0) or 0)
         except Exception:
             output_rate = 0
-        info_y = times_y + 26
+        info_y = times_y + 22
         if source_rate and output_rate and source_rate != output_rate:
             self.text(
                 "CONVERTED  %d -> %d" % (source_rate, output_rate),
@@ -1023,16 +1042,16 @@ class MusicPlayerApp:
                 center_x, info_y, "small", self.GOLD, center=True,
             )
         format_line = self._format_line(track, source_rate, source_bits, output_rate)
-        self.text(format_line, center_x, info_y + 22, "small", self.MUTED, center=True)
+        self.text(format_line, center_x, info_y + 18, "small", self.MUTED, center=True)
         self.text(
-            self._playback_status_line(), center_x, info_y + 44, "small", self.MUTED, center=True,
+            self._playback_status_line(), center_x, info_y + 36, "small", self.MUTED, center=True,
         )
-        content_bottom = info_y + 70
+        content_bottom = info_y + 58
         status_top = self.height - 62 - 38
         spec_base = status_top - 20
         max_h = status_top - content_bottom - 32
-        max_h = max(64, min(220, max_h))
-        self._render_spectrum(spec_base, max_h, gain=2.0)
+        max_h = max(80, min(260, max_h))
+        self._render_spectrum(spec_base, max_h, gain=3.0)
 
     def _format_line(self, track, source_rate, source_bits, output_rate):
         try:
@@ -1075,7 +1094,7 @@ class MusicPlayerApp:
             volume = 0
         return "%s   X shuffle %s   Y repeat %s   vol %d" % (state, shuffle, repeat, volume)
 
-    def _render_spectrum(self, baseline_y, max_h=160, gain=2.0):
+    def _render_spectrum(self, baseline_y, max_h=160, gain=3.0):
         try:
             enabled = bool(self.settings.get("spectrum"))
         except Exception:
@@ -1086,9 +1105,9 @@ class MusicPlayerApp:
         if not levels:
             return
         try:
-            gain_value = max(1.0, min(3.0, float(gain)))
+            gain_value = max(1.0, min(4.0, float(gain)))
         except (TypeError, ValueError):
-            gain_value = 2.0
+            gain_value = 3.0
         if not levels:
             return
         try:
@@ -1108,12 +1127,12 @@ class MusicPlayerApp:
         dark = self.ACCENT_DIM
         for index, raw in enumerate(levels):
             try:
-                boosted = max(0.0, float(raw) * gain_value) ** 0.75
+                boosted = max(0.0, float(raw) * gain_value) ** 0.6
                 level = max(0.0, min(1.0, boosted))
             except (TypeError, ValueError):
                 level = 0.0
             try:
-                boosted_peak = max(0.0, float(peaks[index]) * gain_value) ** 0.75
+                boosted_peak = max(0.0, float(peaks[index]) * gain_value) ** 0.6
                 peak = max(0.0, min(1.0, boosted_peak))
             except (IndexError, TypeError, ValueError):
                 peak = level
@@ -1176,9 +1195,12 @@ class MusicPlayerApp:
 
     def _render_quick_menu(self):
         entries = self._quick_menu_entries()
+        visible = self._quick_menu_visible_rows()
+        scroll = self._quick_menu_clamp_scroll()
+        shown = entries[scroll:scroll + visible]
         width = min(680, self.width - 80)
         row_height = 52
-        height = 102 + len(entries) * row_height
+        height = 102 + len(shown) * row_height
         x = (self.width - width) // 2
         y = (self.height - height) // 2
         self.fill(x - 4, y - 4, width + 8, height + 8, self.ACCENT)
@@ -1186,8 +1208,9 @@ class MusicPlayerApp:
         title = "EQUALIZER" if getattr(self, "quick_menu_page", "main") == "equalizer" else "QUICK MENU"
         self.text(title, self.width // 2, y + 22, "title", center=True)
         value_x = x + min(300, width // 2)
-        for index, (_, label) in enumerate(entries):
-            row_y = y + 70 + index * row_height
+        for row, (_, label) in enumerate(shown):
+            index = scroll + row
+            row_y = y + 70 + row * row_height
             selected = index == self.quick_menu_selection
             if selected:
                 self.fill(x + 24, row_y - 8, width - 48, 48, self.ACCENT)

@@ -1143,5 +1143,46 @@ class OtaRecheckTests(unittest.TestCase):
         self.assertIn("audio_info", ids)
 
 
+    def test_quick_menu_scrolls_on_small_screens(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {
+            "auto_report_errors": False, "audio_output": "auto",
+            "led_mode": "spectrum", "spectrum": True,
+        }
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        app.width = 640
+        app.height = 480
+        app.quick_menu_selection = 0
+        app.quick_menu_scroll = 0
+        entries = app._quick_menu_entries()
+        self.assertGreater(len(entries), app._quick_menu_visible_rows())
+        app.quick_menu_selection = len(entries) - 1
+        scroll = app._quick_menu_clamp_scroll()
+        self.assertGreater(scroll, 0)
+        self.assertLessEqual(scroll + app._quick_menu_visible_rows(), len(entries))
+        app._handle_quick_menu("up")
+        self.assertEqual(app.quick_menu_selection, len(entries) - 2)
+
+    def test_update_interval_is_five_minutes(self):
+        import musicplayer.ui as ui_module
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"auto_update": True, "skipped_version": ""}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.update_lock = threading.Lock()
+        app.update_busy = False
+        app.next_update_check = 0.0
+        app.update_check_interval = 300.0
+        with mock.patch.object(ui_module.threading, "Thread"):
+            with mock.patch.object(ui_module.time, "monotonic", return_value=1000.0):
+                app._maybe_check_update()
+        self.assertEqual(app.next_update_check, 1300.0)
+
+
 if __name__ == "__main__":
     unittest.main()
