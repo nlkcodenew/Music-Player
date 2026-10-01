@@ -902,10 +902,9 @@ class MusicPlayerApp:
             self.text("Nothing is playing", self.width // 2, self.height // 2 - 25, "hero", center=True)
             return
         center_x = self.width // 2
-        offset = max(0, (self.height - 480) // 2 - 20)
         max_w = max(200, self.width - 80)
         title_text, title_font = self._fit_title(track.title, max_w)
-        title_y = 82 + offset
+        title_y = 78
         self.text(title_text, center_x, title_y, title_font, center=True)
         try:
             folder_text = self.ellipsize(track.folder or "", max_w, "small")
@@ -917,9 +916,9 @@ class MusicPlayerApp:
         bar_x = 60
         bar_w = max(120, self.width - 120)
         prog_y = title_y + 76
-        self.fill(bar_x, prog_y, bar_w, 6, self.PANEL)
+        self.fill(bar_x, prog_y, bar_w, 8, self.PANEL)
         ratio = min(1.0, position / duration) if duration > 0 else 0.0
-        self.fill(bar_x, prog_y, int(bar_w * ratio), 6, self.ACCENT)
+        self.fill(bar_x, prog_y, int(bar_w * ratio), 8, self.ACCENT)
         elapsed = self._format_time(position)
         total = self._format_time(duration) if duration else "--:--"
         times_y = prog_y + 12
@@ -950,8 +949,12 @@ class MusicPlayerApp:
         self.text(
             self._playback_status_line(), center_x, info_y + 44, "small", self.MUTED, center=True,
         )
-        spec_base = info_y + 150
-        self._render_spectrum(spec_base, 100)
+        content_bottom = info_y + 70
+        status_top = self.height - 62 - 38
+        spec_base = status_top - 20
+        max_h = status_top - content_bottom - 32
+        max_h = max(64, min(220, max_h))
+        self._render_spectrum(spec_base, max_h, gain=1.6)
 
     def _format_line(self, track, source_rate, source_bits, output_rate):
         try:
@@ -994,7 +997,7 @@ class MusicPlayerApp:
             volume = 0
         return "%s   X shuffle %s   Y repeat %s   vol %d" % (state, shuffle, repeat, volume)
 
-    def _render_spectrum(self, baseline_y, max_h=100):
+    def _render_spectrum(self, baseline_y, max_h=160, gain=1.6):
         try:
             enabled = bool(self.settings.get("spectrum"))
         except Exception:
@@ -1002,6 +1005,12 @@ class MusicPlayerApp:
         if not enabled:
             return
         levels, _rms, beat = self._visual_snapshot()
+        if not levels:
+            return
+        try:
+            gain_value = max(1.0, min(3.0, float(gain)))
+        except (TypeError, ValueError):
+            gain_value = 1.6
         if not levels:
             return
         try:
@@ -1021,11 +1030,11 @@ class MusicPlayerApp:
         dark = self.ACCENT_DIM
         for index, raw in enumerate(levels):
             try:
-                level = max(0.0, min(1.0, float(raw)))
+                level = max(0.0, min(1.0, float(raw) * gain_value))
             except (TypeError, ValueError):
                 level = 0.0
             try:
-                peak = max(0.0, min(1.0, float(peaks[index])))
+                peak = max(0.0, min(1.0, float(peaks[index]) * gain_value))
             except (IndexError, TypeError, ValueError):
                 peak = level
             peak = max(peak, level)

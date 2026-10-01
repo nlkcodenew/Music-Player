@@ -1020,5 +1020,34 @@ class TruepodStyleTests(unittest.TestCase):
         self.assertIn("vol 14", line)
 
 
+    def test_spectrum_gain_boosts_quiet_levels(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.width = 640
+        app.height = 480
+        app.settings = mock.Mock()
+        app.settings.get.return_value = True
+        app.player = mock.Mock()
+        app.player.analyser = mock.Mock()
+        app.player.analyser.peaks = [0.05] * 14
+        app._visual_snapshot = mock.Mock(return_value=([0.05] * 14, 0.02, False))
+        calls = []
+        app.fill = lambda x, y, w, h, color: calls.append((x, y, w, h))
+        app._render_spectrum(400, 160, gain=1.6)
+        bars = [call for call in calls if call[3] > 4]
+        self.assertTrue(bars)
+        app2 = MusicPlayerApp.__new__(MusicPlayerApp)
+        app2.width = 640
+        app2.height = 480
+        app2.settings = mock.Mock()
+        app2.settings.get.return_value = False
+        app2.player = mock.Mock()
+        app2._visual_snapshot = mock.Mock()
+        fills = []
+        app2.fill = lambda *args: fills.append(args)
+        app2._render_spectrum(400, 160)
+        self.assertEqual(fills, [])
+        app2._visual_snapshot.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
