@@ -1,8 +1,8 @@
 {
-  "version": "1.6.3",
+  "version": "1.7.0",
   "app": "trimui-music-player",
-  "release_ref": "v1.6.3",
-  "base_url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.6.3/files",
+  "release_ref": "v1.7.0",
+  "base_url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.7.0/files",
   "files": [
     {
       "path": "THIRD_PARTY_NOTICES.txt",
@@ -36,13 +36,13 @@
     },
     {
       "path": "musicplayer/__init__.py",
-      "sha256": "f886e50da150098d01f19283862a3ccd36a4efb28f1c00f9747e93de9f467f56",
+      "sha256": "ea0f42259d8dfb17d03448182e365586dda58231f00c580c8473576d0d881fa7",
       "size": 48
     },
     {
       "path": "musicplayer/audio.py",
-      "sha256": "ae4ee4fd681c1c4da59c6cd3477fb2f8f1192ac12bc9836422d053ddf295be4a",
-      "size": 13461
+      "sha256": "3530a8858d9065055829952ba0177c54351d9b8c2ddf01b62146cdbfbdcecf49",
+      "size": 14213
     },
     {
       "path": "musicplayer/audio_format.py",
@@ -73,6 +73,11 @@
       "path": "musicplayer/display.py",
       "sha256": "5234b8e00d5582b376f8fdada29c738c14858fb1ed251a199b4eb769c71b2c10",
       "size": 5280
+    },
+    {
+      "path": "musicplayer/drive.py",
+      "sha256": "a6fc427381671e2eb79d38d5b066cafb46d3b5e6c214b141de60e81cd19b7764",
+      "size": 13921
     },
     {
       "path": "musicplayer/equalizer.py",
@@ -126,8 +131,8 @@
     },
     {
       "path": "musicplayer/settings.py",
-      "sha256": "f049d61797adcb98fca2da2a604063fdd9176dcb9f3accf393fd4ec0f87abd85",
-      "size": 2839
+      "sha256": "4ed6a1bf95daea0c54c1793dc0598ee85978b0d506dd70ce5db9c5bfc5230683",
+      "size": 3530
     },
     {
       "path": "musicplayer/sleep_timer.py",
@@ -141,8 +146,8 @@
     },
     {
       "path": "musicplayer/ui.py",
-      "sha256": "d74b4b325b7ac2ece29edf6728db2db3ce3b0fba39abdca0f5c561701bb7a3e6",
-      "size": 56289
+      "sha256": "6dd291d5d96b89e3b930dfc0015bca096c78725eacb1a0a1a1c0c7026a9685cb",
+      "size": 73032
     },
     {
       "path": "musicplayer/updater.py",
@@ -158,25 +163,25 @@
       "path": "certs/cacert.pem",
       "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9",
       "size": 188900,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.6.3/assets/cacert.pem"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.7.0/assets/cacert.pem"
     },
     {
       "path": "config.json",
       "sha256": "88ca226e4119a5b356275820b836bf84c4c8e188dcc1383201d174ca0447fe5e",
       "size": 102,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.6.3/assets/config.json"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.7.0/assets/config.json"
     },
     {
       "path": "icon.png",
       "sha256": "df4f2ee9aec763c26d1262a39b4d395eeada0d1b1fdf33d1ef9339d28a36a723",
       "size": 10989,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.6.3/assets/icon.png"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.7.0/assets/icon.png"
     },
     {
       "path": "LICENSE.txt",
       "sha256": "c5932e63588c9fc195c782acb2cd69b196f501d3b9189c7e21e538ad1c58c835",
       "size": 1074,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.6.3/LICENSE"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.7.0/LICENSE"
     }
   ]
 }

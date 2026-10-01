@@ -8,10 +8,22 @@ from .audio_output import OUTPUT_MODES, output_mode_label
 from .background import BACKGROUND_EXIT, load_resume, save_background_session
 from .collections import Collections
 from .display import DisplayController
+from .drive import (
+    DEFAULT_FOLDER_ID,
+    DriveError,
+    clear_cache as drive_clear_cache,
+    download_offline as drive_download_offline,
+    ensure_stream_file as drive_ensure_stream_file,
+    extract_folder_id as drive_extract_folder_id,
+    get_cached_folder as drive_get_cached,
+    list_folder as drive_list_folder,
+    put_cached_folder as drive_put_cache,
+)
 from .input import InputState
 from .identity import installation_id
 from .audio_format import format_rate, format_spec, track_audio_info
 from .leds import LedController
+from .library import Track
 from .logger import get_logger
 from .lyrics import load_lyrics
 from .reporter import queue_report, retry_pending
@@ -92,6 +104,11 @@ class MusicPlayerApp:
         self._visual_state = ([0.0] * 14, 0.0, False)
         self.next_update_check = 0.0
         self.update_check_interval = 300.0
+        self.drive_stack = []
+        self.drive_entries = []
+        self.drive_page_token = ""
+        self.drive_busy = False
+        self.drive_loaded = False
 
     def initialize(self):
         self.display.restore()
@@ -126,6 +143,7 @@ class MusicPlayerApp:
         self.runtime.open_inputs()
         self._load_fonts()
         self.player = AudioPlayer(self.runtime, self.tracks, self.settings)
+        self.player.drive_resolver = self._drive_resolve_track
         self.player.initialize()
         try:
             self.leds = LedController()
@@ -434,6 +452,15 @@ class MusicPlayerApp:
                 self.active_playlist = ""
                 self.selection = 0
                 self.scroll = 0
+            elif self.screen == "library" and self.library_mode == "drive" and getattr(self, "drive_stack", None):
+                self.drive_stack.pop()
+                self.drive_entries = []
+                self.drive_page_token = ""
+                self.selection = 0
+                self.scroll = 0
+                if not self.drive_stack:
+                    self.drive_loaded = False
+                self._drive_refresh()
             else:
                 self.exit_confirmation = True
             return
@@ -456,6 +483,11 @@ class MusicPlayerApp:
         if action == "x":
             if self.screen == "lyrics":
                 self._cycle_lyrics_translation()
+            elif self.screen == "library" and self.library_mode == "drive":
+                rows = self._drive_rows()
+                if rows:
+                    self.selection = min(self.selection, len(rows) - 1)
+                    self._drive_download_row(rows[self.selection])
             else:
                 self._toggle_favorite()
             return
@@ -472,6 +504,24 @@ class MusicPlayerApp:
                 get_logger().info("repeat mode changed=%s", repeat)
             return
         if self.screen == "library":
+            if self.library_mode == "drive":
+                rows = self._drive_rows()
+                if not rows:
+                    if action in ("up", "down", "left", "right", "a"):
+                        self._drive_refresh()
+                    return
+                if action == "up":
+                    self.selection = max(0, self.selection - 1)
+                elif action == "down":
+                    self.selection = min(len(rows) - 1, self.selection + 1)
+                elif action == "left":
+                    self.selection = max(0, self.selection - self.visible_rows())
+                elif action == "right":
+                    self.selection = min(len(rows) - 1, self.selection + self.visible_rows())
+                elif action == "a":
+                    self.selection = min(self.selection, len(rows) - 1)
+                    self._drive_play_row(rows[self.selection])
+                return
             entries = self._library_entries()
             if action == "up" and entries:
                 self.selection = max(0, self.selection - 1)
@@ -538,6 +588,9 @@ class MusicPlayerApp:
             ("led_mode", "LED Mode: %s" % str(self.settings.get("led_mode")).title()),
             ("led_test", "LED Test: %s" % self._led_test_label()),
             ("spectrum", "Spectrum: %s" % ("On" if self.settings.get("spectrum") else "Off")),
+            ("drive_refresh", "Drive Refresh"),
+            ("drive_download", "Drive Download (offline)"),
+            ("drive_clear", "Drive Clear Cache"),
             ("audio_info", "Audio Info"),
             ("check_update", "Check for Update"),
             ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
@@ -615,6 +668,37 @@ class MusicPlayerApp:
             self._toggle_led_test()
         elif selected == "spectrum":
             self._toggle_spectrum()
+        elif selected == "drive_refresh":
+            self.quick_menu = False
+            self.library_mode = "drive"
+            self.screen = "library"
+            self.drive_entries = [] if not getattr(self, "drive_stack", None) else self.drive_entries
+            self.drive_page_token = ""
+            self.selection = 0
+            self.scroll = 0
+            self._drive_refresh()
+        elif selected == "drive_download":
+            self.quick_menu = False
+            if self.library_mode == "drive" and self.screen == "library":
+                rows = self._drive_rows()
+                if rows:
+                    self.selection = min(self.selection, len(rows) - 1)
+                    self._drive_download_row(rows[self.selection])
+            else:
+                self.status = "Open DRIVE view (Y) first, then download"
+                self.status_error = True
+        elif selected == "drive_clear":
+            try:
+                drive_clear_cache(self.paths.data_dir)
+            except Exception as error:
+                self.status = "Drive clear: %s" % error
+                self.status_error = True
+            else:
+                self.drive_entries = []
+                self.drive_page_token = ""
+                self.drive_loaded = False
+                self.status = "Drive cache cleared"
+                self.status_error = False
         elif selected == "audio_info":
             self.status = self._audio_info_line()
             self.status_error = False
@@ -859,13 +943,251 @@ class MusicPlayerApp:
         return self.tracks
 
     def _cycle_library_mode(self):
-        modes = ("all", "favorites", "playlists", "favorite_playlists")
+        modes = ("all", "favorites", "playlists", "favorite_playlists", "drive")
         current = self.playlist_parent_mode if self.library_mode == "playlist_tracks" else self.library_mode
+        if current not in modes:
+            current = "all"
         self.library_mode = modes[(modes.index(current) + 1) % len(modes)]
         self.active_playlist = ""
         self.selection = 0
         self.scroll = 0
         get_logger().info("library mode=%s", self.library_mode)
+        if self.library_mode == "drive" and not getattr(self, "drive_loaded", False):
+            self._drive_refresh()
+
+    def _drive_folder_id(self):
+        try:
+            folder = str(self.settings.get("drive_folder_id") or "").strip()
+        except Exception:
+            folder = ""
+        return drive_extract_folder_id(folder) if folder else DEFAULT_FOLDER_ID
+
+    def _drive_api_key(self):
+        try:
+            return str(self.settings.get("drive_api_key") or "").strip()
+        except Exception:
+            return ""
+
+    def _drive_current(self):
+        if getattr(self, "drive_stack", None):
+            return self.drive_stack[-1]
+        return (self._drive_folder_id(), "Drive")
+
+    def _drive_path_label(self):
+        names = [name for _, name in (getattr(self, "drive_stack", []) or [])]
+        if not names:
+            return "DRIVE"
+        return "DRIVE/" + "/".join(names[1:] if len(names) > 1 else names)
+
+    def _drive_album_label(self):
+        names = [name for _, name in (getattr(self, "drive_stack", []) or [])]
+        cleaned = [name for name in names if name and name != "Drive"]
+        return "/".join(cleaned) if cleaned else "Drive"
+
+    def _drive_refresh(self, page_token="", append=False):
+        if getattr(self, "drive_busy", False):
+            return
+        self.drive_busy = True
+        try:
+            folder_id, _name = self._drive_current()
+        except Exception:
+            folder_id = self._drive_folder_id()
+        api_key = self._drive_api_key()
+        try:
+            data_dir = self.paths.data_dir
+        except Exception:
+            data_dir = ""
+        try:
+            app_dir = self.paths.app_dir
+        except Exception:
+            app_dir = ""
+        if not api_key:
+            cached = drive_get_cached(data_dir, folder_id, page_token) if data_dir else None
+            if cached is not None:
+                entries, token = cached
+                self.drive_entries = (self.drive_entries + entries) if append else entries
+                self.drive_page_token = token
+                self.drive_loaded = True
+                self.status = "Drive offline cache (%d items)" % len(self.drive_entries)
+                self.status_error = False
+            else:
+                self.status = "Set drive_api_key in settings.json, then Drive Refresh"
+                self.status_error = True
+            return
+        try:
+            entries, token = drive_list_folder(
+                app_dir, folder_id, api_key, page_token, 25,
+            )
+        except DriveError as error:
+            cached = drive_get_cached(data_dir, folder_id, page_token) if data_dir else None
+            if cached is not None:
+                cached_entries, cached_token = cached
+                self.drive_entries = (self.drive_entries + cached_entries) if append else cached_entries
+                self.drive_page_token = cached_token
+                self.drive_loaded = True
+                self.status = "Drive offline (%s)" % error
+                self.status_error = True
+            else:
+                self.status = "Drive: %s" % error
+                self.status_error = True
+            get_logger().warning("drive list failed: %s", error)
+            return
+        except Exception as error:
+            self.status = "Drive: %s" % error
+            self.status_error = True
+            get_logger().warning("drive list failed: %s", error)
+            return
+        finally:
+            self.drive_busy = False
+        try:
+            if data_dir:
+                if append:
+                    previous = drive_get_cached(data_dir, folder_id, "") or ([], "")
+                    merged = (previous[0] if previous else []) + list(entries)
+                    drive_put_cache(data_dir, folder_id, merged, token)
+                else:
+                    drive_put_cache(data_dir, folder_id, entries, token)
+        except Exception as error:
+            get_logger().warning("drive cache save failed: %s", error)
+        self.drive_entries = (self.drive_entries + list(entries)) if append else list(entries)
+        self.drive_page_token = token
+        self.drive_loaded = True
+        self.selection = min(getattr(self, "selection", 0), max(0, len(self._drive_rows()) - 1))
+        self.status = "Drive: %d items%s" % (
+            len(self.drive_entries), " (more...)" if token else "",
+        )
+        self.status_error = False
+        get_logger().info(
+            "drive list folder=%s items=%d more=%s", folder_id, len(entries), bool(token),
+        )
+
+    def _drive_rows(self):
+        rows = list(getattr(self, "drive_entries", []) or [])
+        if getattr(self, "drive_page_token", ""):
+            rows = rows + ["__more__"]
+        return rows
+
+    def _drive_resolve_track(self, track):
+        """Resolve a drive:// track to a local cached file for SDL_mixer."""
+        path = getattr(track, "path", "")
+        if not path.startswith("drive://"):
+            return path
+        remainder = path[len("drive://"):]
+        file_id = remainder.split("/", 1)[0]
+        filename = remainder.split("/", 1)[1] if "/" in remainder else "track"
+        if not file_id:
+            raise DriveError("bad Drive track path")
+        try:
+            from .drive import DriveEntry as _DriveEntry
+            entry = _DriveEntry(
+                file_id=file_id,
+                name=filename,
+                mime_type="",
+                size=0,
+                is_folder=False,
+                title=filename.rsplit(".", 1)[0],
+                extension=__import__("os").path.splitext(filename)[1].lower(),
+            )
+        except Exception:
+            raise DriveError("bad Drive track path")
+        try:
+            app_dir = self.paths.app_dir
+            data_dir = self.paths.data_dir
+        except Exception as error:
+            raise DriveError("paths unavailable: %s" % error)
+        self.status = "Downloading %s..." % entry.title
+        self.status_error = False
+        try:
+            local = drive_ensure_stream_file(app_dir, data_dir, entry, self._drive_api_key())
+        except Exception:
+            # Retry with known size from the current listing when available.
+            known = next(
+                (item for item in (getattr(self, "drive_entries", []) or [])
+                 if getattr(item, "file_id", "") == file_id),
+                None,
+            )
+            if known is None:
+                raise
+            local = drive_ensure_stream_file(app_dir, data_dir, known, self._drive_api_key())
+        self.status = ""
+        return local
+
+    def _drive_track_for(self, entry):
+        album = self._drive_album_label()
+        folder = "Drive/%s" % album if album != "Drive" else "Drive"
+        return Track(
+            path="drive://%s/%s" % (entry.file_id, entry.name),
+            title=entry.title,
+            folder=folder,
+            extension=entry.extension,
+        )
+
+    def _drive_play_row(self, row):
+        from .drive import DriveEntry as _DriveEntry
+        if row == "__more__":
+            token = getattr(self, "drive_page_token", "")
+            self._drive_refresh(page_token=token, append=True)
+            return True
+        if not isinstance(row, _DriveEntry):
+            return False
+        if row.is_folder:
+            self.drive_stack.append((row.file_id, row.name))
+            self.drive_entries = []
+            self.drive_page_token = ""
+            self.selection = 0
+            self.scroll = 0
+            self._drive_refresh()
+            return True
+        playlist = [self._drive_track_for(item) for item in (self.drive_entries or []) if not item.is_folder]
+        target = next(
+            (index for index, track in enumerate(playlist) if track.path.startswith("drive://%s/" % row.file_id)),
+            -1,
+        )
+        if target < 0:
+            self.status = "Drive track not found"
+            self.status_error = True
+            return False
+        self.player.tracks = playlist
+        if self.player.play(target):
+            self.screen = "playing"
+            return True
+        self.status = self.player.error or "Drive playback failed"
+        self.status_error = True
+        return False
+
+    def _drive_download_row(self, row):
+        from .drive import DriveEntry as _DriveEntry
+        if row == "__more__" or not isinstance(row, _DriveEntry) or row.is_folder:
+            self.status = "Select an audio track to download"
+            self.status_error = True
+            return False
+        try:
+            app_dir = self.paths.app_dir
+            music_dir = self.paths.music_dir
+        except Exception as error:
+            self.status = "Drive paths unavailable: %s" % error
+            self.status_error = True
+            return False
+        self.status = "Downloading %s..." % row.title
+        self.status_error = False
+        try:
+            destination = drive_download_offline(
+                app_dir, music_dir, self._drive_album_label(), row, self._drive_api_key(),
+            )
+        except DriveError as error:
+            self.status = "Drive download: %s" % error
+            self.status_error = True
+            get_logger().warning("drive download failed: %s", error)
+            return False
+        self.status = "Saved %s" % destination[len(music_dir):].lstrip("/\\")
+        self.status_error = False
+        get_logger().info("drive offline saved=%s", destination)
+        try:
+            from .library import scan_library
+            self.tracks = scan_library(music_dir)
+        except Exception as error:
+            get_logger().warning("library rescan failed: %s", error)
+        return True
 
     def _toggle_favorite(self):
         if self.screen == "playing":
@@ -972,6 +1294,9 @@ class MusicPlayerApp:
         return "v%s | ID: %s" % (APP_VERSION, self.install_id)
 
     def _render_library(self):
+        if getattr(self, "library_mode", "") == "drive":
+            self._render_drive()
+            return
         entries = self._library_entries()
         if not entries:
             message = {
@@ -1019,6 +1344,66 @@ class MusicPlayerApp:
                 try:
                     spec = format_spec(entry.path)
                 except Exception:
+                    spec = ""
+            self.text(
+                self.ellipsize(title, self.width - 330 - spec_width, "body"),
+                32, y, "body", color,
+            )
+            detail = self.ellipsize(detail, 245, "small")
+            detail_width = self.measure(detail, "small")[0]
+            self.text(detail, self.width - 32 - detail_width - spec_width, y + 5, "small", dim_color)
+            if spec:
+                spec_width_px = self.measure(spec, "small")[0]
+                self.text(spec, self.width - 28 - spec_width_px, y + 5, "small", spec_color)
+            y += 52
+
+    def _render_drive(self):
+        rows = self._drive_rows()
+        try:
+            crumb = self._drive_path_label()
+            self.text(
+                self.ellipsize(str(crumb), self.width - 56, "small"),
+                28, 74, "small", self.MUTED,
+            )
+        except Exception:
+            pass
+        if not rows:
+            if getattr(self, "drive_busy", False):
+                message = "Loading Drive..."
+            elif not self._drive_api_key():
+                message = "Drive needs drive_api_key in settings.json"
+            else:
+                message = "Drive folder is empty"
+            self.text(message, self.width // 2, self.height // 2 - 35, "hero", center=True)
+            self.text("SELECT menu: Drive Refresh", self.width // 2, self.height // 2 + 25, "small", self.MUTED, center=True)
+            return
+        visible_rows = self.visible_rows()
+        self.scroll = min(self.scroll, self.selection)
+        if self.selection >= self.scroll + visible_rows:
+            self.scroll = self.selection - visible_rows + 1
+        spec_width = 150
+        y = 104
+        for index in range(self.scroll, min(len(rows), self.scroll + visible_rows)):
+            selected = index == self.selection
+            if selected:
+                self.fill(18, y - 5, self.width - 36, 48, self.ACCENT)
+            color = self.TEXT if selected else self.TEXT
+            dim_color = self.TEXT if selected else self.MUTED
+            spec_color = self.TEXT if selected else self.SPEC
+            row = rows[index]
+            if row == "__more__":
+                title, detail, spec = "More... (next page)", "", ""
+            elif getattr(row, "is_folder", False):
+                title = "[%s]" % row.name
+                detail = "folder"
+                spec = ""
+            else:
+                title = row.title
+                detail = row.name.rsplit(".", 1)[-1].upper() if "." in row.name else "AUDIO"
+                try:
+                    size_mb = float(row.size) / (1024 * 1024) if row.size else 0.0
+                    spec = "%.1f MB" % size_mb if size_mb else ""
+                except (TypeError, ValueError):
                     spec = ""
             self.text(
                 self.ellipsize(title, self.width - 330 - spec_width, "body"),
@@ -1289,7 +1674,10 @@ class MusicPlayerApp:
             state += "   SLEEP %s" % self.sleep_timer.status()
         self.text(state, 24, y + 18, "small", self.MUTED)
         if self.screen == "library":
-            hint = "A OPEN/PLAY  X FAVORITE  Y VIEW"
+            if getattr(self, "library_mode", "") == "drive":
+                hint = "A OPEN/PLAY  X DOWNLOAD  Y VIEW"
+            else:
+                hint = "A OPEN/PLAY  X FAVORITE  Y VIEW"
         elif self.screen == "lyrics":
             hint = "A PAUSE  X TRANSLATION  SELECT MENU"
         else:
@@ -1324,9 +1712,12 @@ class MusicPlayerApp:
             "playlists": "PLAYLISTS",
             "favorite_playlists": "FAVORITE PLAYLISTS",
             "playlist_tracks": self.active_playlist.upper(),
+            "drive": "DRIVE",
         }.get(self.library_mode, "LIBRARY")
 
     def _library_tracks(self):
+        if getattr(self, "library_mode", "") == "drive":
+            return [self._drive_track_for(item) for item in (getattr(self, "drive_entries", []) or []) if not item.is_folder]
         entries = self._library_entries()
         if self.library_mode in ("playlists", "favorite_playlists"):
             names = set(entries)

@@ -51,6 +51,7 @@ class AudioPlayer:
         self.finished_callback = None
         self.last_state_log = 0.0
         self.analyser = SpectrumAnalyser()
+        self.drive_resolver = None
 
     def initialize(self):
         flags = MIX_INIT_FLAC | MIX_INIT_MP3 | MIX_INIT_OGG | MIX_INIT_OPUS
@@ -166,7 +167,22 @@ class AudioPlayer:
         index %= len(self.tracks)
         self.stop()
         track = self.tracks[index]
-        music = self.runtime.Mix_LoadMUS(track.path.encode("utf-8"))
+        local_path = track.path
+        resolver = getattr(self, "drive_resolver", None)
+        if local_path.startswith("drive://") and callable(resolver):
+            try:
+                local_path = resolver(track)
+            except Exception as error:
+                self.error = "Drive download failed: %s" % error
+                get_logger().error(
+                    "drive resolve failed at index=%d title=%r: %s",
+                    index, track.title, error,
+                )
+                return False
+            if not local_path:
+                self.error = "Drive download failed for %s" % track.title
+                return False
+        music = self.runtime.Mix_LoadMUS(local_path.encode("utf-8"))
         if not music:
             self.error = "Cannot decode %s: %s" % (track.title, self.runtime.error())
             get_logger().error(
@@ -191,7 +207,10 @@ class AudioPlayer:
         self.paused_at = 0.0
         self.error = ""
         self.analyser.reset()
-        self.settings.set("last_track", track.path)
+        try:
+            self.settings.set("last_track", local_path)
+        except Exception:
+            pass
         get_logger().info(
             "playback started index=%d title=%r format=%s tracks=%d duration=%.3f repeat=%s shuffle=%s",
             index, track.title, track.extension, len(self.tracks), self.duration(),

@@ -19,6 +19,8 @@ DEFAULTS = {
     "auto_report_errors": False,
     "led_mode": "spectrum",
     "spectrum": True,
+    "drive_folder_id": "1KB8-kxt0QSpgBSQw4VMIQmYCGS3F2D2a",
+    "drive_api_key": "",
 }
 
 
@@ -69,6 +71,18 @@ class Settings:
         if self.values.get("led_mode") not in ("off", "beat", "spectrum"):
             self.values["led_mode"] = "spectrum"
         self.values["spectrum"] = bool(self.values.get("spectrum", True))
+        try:
+            from .drive import DEFAULT_FOLDER_ID, extract_folder_id
+        except Exception:
+            DEFAULT_FOLDER_ID = "1KB8-kxt0QSpgBSQw4VMIQmYCGS3F2D2a"
+
+            def extract_folder_id(value):
+                text = str(value or "").strip()
+                return text
+        raw_folder = str(self.values.get("drive_folder_id", "") or "").strip()
+        folder = extract_folder_id(raw_folder) if raw_folder else ""
+        self.values["drive_folder_id"] = folder or DEFAULT_FOLDER_ID
+        self.values["drive_api_key"] = str(self.values.get("drive_api_key", "") or "").strip()
         return self
 
     def save(self):

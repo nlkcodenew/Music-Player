@@ -28,6 +28,19 @@ from musicplayer.settings import Settings
 from musicplayer.sleep_timer import SleepTimer
 from musicplayer.updater import apply_update, update_available, validate_manifest, version_tuple
 from musicplayer.ui import MusicPlayerApp
+from musicplayer import drive as drive_module
+from musicplayer.drive import (
+    DEFAULT_FOLDER_ID,
+    DriveError,
+    build_list_url,
+    extract_folder_id,
+    is_audio_name,
+    media_url,
+    offline_path,
+    parse_list_response,
+    public_download_url,
+    sanitize_component,
+)
 
 
 class LibraryTests(unittest.TestCase):
@@ -1256,6 +1269,161 @@ class OtaRecheckTests(unittest.TestCase):
         app.update_manifest = None
         ids = [entry[0] for entry in app._quick_menu_entries()]
         self.assertIn("led_test", ids)
+
+
+class DriveTests(unittest.TestCase):
+    def test_extract_folder_id_from_id_and_urls(self):
+        folder = "1KB8-kxt0QSpgBSQw4VMIQmYCGS3F2D2a"
+        self.assertEqual(extract_folder_id(folder), folder)
+        self.assertEqual(
+            extract_folder_id("https://drive.google.com/drive/folders/%s?usp=sharing" % folder),
+            folder,
+        )
+        self.assertEqual(
+            extract_folder_id("https://drive.google.com/open?id=%s" % folder), folder,
+        )
+
+    def test_default_folder_is_public_share(self):
+        self.assertEqual(DEFAULT_FOLDER_ID, "1KB8-kxt0QSpgBSQw4VMIQmYCGS3F2D2a")
+
+    def test_list_url_uses_paged_parents_query_with_minimal_fields(self):
+        url = build_list_url("FOLDER1234567890", "PUBLIC_KEY", page_size=25)
+        self.assertIn("googleapis.com/drive/v3/files", url)
+        self.assertIn("pageSize=25", url)
+        self.assertIn("key=PUBLIC_KEY", url)
+        self.assertIn("parents", url)
+        self.assertIn("nextPageToken", url)
+        self.assertNotIn("Authorization", url)
+        with self.assertRaises(DriveError):
+            build_list_url("FOLDER1234567890", "")
+
+    def test_parse_filters_to_audio_and_folders_only(self):
+        payload = {
+            "nextPageToken": "NEXT",
+            "files": [
+                {"id": "f1", "name": "Album", "mimeType": "application/vnd.google-apps.folder"},
+                {"id": "a1", "name": "song.flac", "mimeType": "audio/flac", "size": "123"},
+                {"id": "a2", "name": "song.mp3", "mimeType": "application/octet-stream"},
+                {"id": "d1", "name": "notes.txt", "mimeType": "text/plain"},
+                {"id": "", "name": "bad", "mimeType": "audio/mpeg"},
+            ],
+        }
+        entries, token = parse_list_response(payload)
+        self.assertEqual(token, "NEXT")
+        by_id = {entry.file_id: entry for entry in entries}
+        self.assertIn("f1", by_id)
+        self.assertTrue(by_id["f1"].is_folder)
+        self.assertIn("a1", by_id)
+        self.assertIn("a2", by_id)
+        self.assertNotIn("d1", by_id)
+        self.assertFalse(any(entry.file_id == "" for entry in entries))
+
+    def test_audio_names_support_local_extensions(self):
+        self.assertTrue(is_audio_name("track.FLAC"))
+        self.assertTrue(is_audio_name("track.opus", "application/octet-stream"))
+        self.assertFalse(is_audio_name("cover.jpg", "image/jpeg"))
+
+    def test_download_urls_prefer_key_but_allow_keyless(self):
+        keyed = media_url("FILE1234567890", "PUBLIC_KEY")
+        self.assertIn("alt=media", keyed)
+        self.assertIn("key=PUBLIC_KEY", keyed)
+        keyless = public_download_url("FILE1234567890")
+        self.assertIn("uc?export=download", keyless)
+        self.assertIn("FILE1234567890", keyless)
+
+    def test_cache_roundtrip_and_clear(self):
+        with tempfile.TemporaryDirectory() as root:
+            entries, _token = parse_list_response({
+                "files": [
+                    {"id": "a1", "name": "song.mp3", "mimeType": "audio/mpeg", "size": "10"},
+                ],
+            })
+            drive_module.put_cached_folder(root, "F1", entries, "T1")
+            cached = drive_module.get_cached_folder(root, "F1")
+            self.assertIsNotNone(cached)
+            self.assertEqual(cached[0][0].file_id, "a1")
+            self.assertEqual(cached[1], "T1")
+            drive_module.clear_cache(root)
+            self.assertIsNone(drive_module.get_cached_folder(root, "F1"))
+
+    def test_offline_path_stays_under_music_drive_album(self):
+        with tempfile.TemporaryDirectory() as root:
+            music = os.path.join(root, "Music")
+            path = offline_path(music, "My Album", "01 Title.flac")
+            self.assertTrue(path.startswith(os.path.join(music, "Drive")))
+            self.assertIn("My Album", path)
+        self.assertEqual(sanitize_component('a/b:c*?"<>|', "x"), "a_b_c______")
+
+    def test_settings_normalize_drive_link_and_key(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "settings.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "drive_folder_id": "https://drive.google.com/drive/folders/1KB8-kxt0QSpgBSQw4VMIQmYCGS3F2D2a",
+                    "drive_api_key": "  KEY123  ",
+                }, handle)
+            settings = Settings(path).load()
+        self.assertEqual(settings.get("drive_folder_id"), DEFAULT_FOLDER_ID)
+        self.assertEqual(settings.get("drive_api_key"), "KEY123")
+        with tempfile.TemporaryDirectory() as root:
+            fresh = Settings(os.path.join(root, "settings.json")).load()
+        self.assertEqual(fresh.get("drive_folder_id"), DEFAULT_FOLDER_ID)
+        self.assertEqual(fresh.get("drive_api_key"), "")
+
+    def test_audio_resolves_drive_scheme_before_decode(self):
+        from musicplayer.library import Track
+        runtime = mock.Mock()
+        runtime.Mix_LoadMUS.return_value = object()
+        runtime.Mix_PlayMusic.return_value = 0
+        runtime.Mix_MusicDuration.return_value = 0
+        values = {"volume": 80, "repeat": "off", "shuffle": False}
+        settings = mock.Mock()
+        settings.get.side_effect = values.get
+        settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        player = AudioPlayer(runtime, [
+            Track(path="drive://FILE1/song.mp3", title="song", folder="Drive", extension=".mp3"),
+        ], settings)
+        player.audio_ready = True
+        player.drive_resolver = lambda track: "/tmp/song.mp3"
+        self.assertTrue(player.play(0))
+        runtime.Mix_LoadMUS.assert_called_once_with(b"/tmp/song.mp3")
+
+    def test_drive_library_mode_and_quick_menu(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {
+            "auto_report_errors": False, "audio_output": "auto",
+            "led_mode": "spectrum", "spectrum": True,
+            "drive_folder_id": DEFAULT_FOLDER_ID, "drive_api_key": "K",
+        }
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        app.paths = mock.Mock(app_dir="/app", data_dir="/data", music_dir="/music")
+        app.screen = "library"
+        app.active_playlist = ""
+        app.leds = mock.Mock(test_index=-1)
+        app.library_mode = "favorite_playlists"
+        app.playlist_parent_mode = "playlists"
+        app.selection = 0
+        app.scroll = 0
+        app.drive_stack = []
+        app.drive_entries = []
+        app.drive_page_token = ""
+        app.drive_loaded = False
+        app.drive_busy = False
+        with mock.patch.object(app, "_drive_refresh") as refresh:
+            app._cycle_library_mode()
+        self.assertEqual(app.library_mode, "drive")
+        refresh.assert_called_once()
+        self.assertEqual(app._screen_title(), "DRIVE")
+        ids = [entry[0] for entry in app._quick_menu_entries()]
+        self.assertIn("drive_refresh", ids)
+        self.assertIn("drive_download", ids)
+        self.assertIn("drive_clear", ids)
 
 
 if __name__ == "__main__":
