@@ -437,6 +437,10 @@ class MusicPlayerApp:
         get_logger().info("input action=%s screen=%s", action, self.screen)
         if self.update_busy:
             return
+        if self.screen == "library" and action == "prev":
+            action = "up"
+        elif self.screen == "library" and action == "next":
+            action = "down"
         if getattr(self, "quick_menu", False):
             self._handle_quick_menu(action)
             return

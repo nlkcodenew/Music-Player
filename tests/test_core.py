@@ -1781,9 +1781,19 @@ class LibraryPagingTests(unittest.TestCase):
 
     def test_dpad_prev_next_changes_track(self):
         app = self._app()
+        app.screen = "playing"
         app._handle("prev")
         app.player.advance.assert_called_once_with(False)
         self.assertEqual(app.screen, "playing")
+
+    def test_dpad_moves_selection_inside_library(self):
+        app = self._app()
+        app._handle("prev")
+        app.player.advance.assert_not_called()
+        self.assertEqual(app.selection, 9)
+        self.assertEqual(app.screen, "library")
+        app._handle("next")
+        self.assertEqual(app.selection, 10)
 
     def test_l1_r1_ignored_while_listening(self):
         app = self._app()
