@@ -55,15 +55,19 @@ from .updater import apply_update, fetch_manifest, update_available
 
 
 class MusicPlayerApp:
-    BG = (6, 7, 11, 255)
-    PANEL = (15, 17, 23, 255)
-    ACCENT = (222, 75, 50, 255)
-    ACCENT_DIM = (120, 40, 30, 255)
-    TEXT = (238, 232, 222, 255)
-    MUTED = (140, 135, 125, 255)
-    SPEC = (255, 140, 40, 255)
+    BG = (226, 232, 240, 255)
+    PANEL = (255, 255, 255, 255)
+    TRACK = (203, 213, 225, 255)
+    ACCENT = (14, 165, 233, 255)
+    ACCENT_DIM = (186, 230, 253, 255)
+    TEXT = (15, 23, 42, 255)
+    ON_ACCENT = (255, 255, 255, 255)
+    MUTED = (100, 116, 139, 255)
+    SPEC = (249, 115, 22, 255)
     GOLD = (255, 195, 60, 255)
-    ERROR = (105, 32, 42, 255)
+    ERROR = (220, 50, 50, 255)
+    INTRO_BG = (8, 8, 12, 255)
+    INTRO_RED = (229, 9, 20, 255)
 
     def __init__(self, paths, tracks):
         self.paths = paths
@@ -386,6 +390,7 @@ class MusicPlayerApp:
     def run(self):
         try:
             self.initialize()
+            self._play_intro()
             event = SDL_Event()
             while self.running:
                 while self.runtime.SDL_PollEvent(ctypes.byref(event)):
@@ -588,6 +593,7 @@ class MusicPlayerApp:
             ("led_mode", "LED Mode: %s" % str(self.settings.get("led_mode")).title()),
             ("led_test", "LED Test: %s" % self._led_test_label()),
             ("spectrum", "Spectrum: %s" % ("On" if self.settings.get("spectrum") else "Off")),
+            ("intro", "Intro: %s" % ("On" if self.settings.get("intro") else "Off")),
             ("drive_refresh", "Drive Refresh"),
             ("drive_download", "Drive Download (offline)"),
             ("drive_clear", "Drive Clear Cache"),
@@ -668,6 +674,8 @@ class MusicPlayerApp:
             self._toggle_led_test()
         elif selected == "spectrum":
             self._toggle_spectrum()
+        elif selected == "intro":
+            self._toggle_intro()
         elif selected == "drive_refresh":
             self.quick_menu = False
             self.library_mode = "drive"
@@ -897,6 +905,18 @@ class MusicPlayerApp:
         self.status = "Spectrum: %s" % ("On" if enabled else "Off")
         self.status_error = False
         get_logger().info("spectrum display=%s", "on" if enabled else "off")
+        return enabled
+
+    def _toggle_intro(self):
+        try:
+            enabled = not self.settings.get("intro")
+        except Exception:
+            enabled = True
+        self.settings.set("intro", enabled)
+        self.settings.save()
+        self.status = "Intro: %s" % ("On" if enabled else "Off")
+        self.status_error = False
+        get_logger().info("intro splash=%s", "on" if enabled else "off")
         return enabled
 
     def _lyrics_document(self):
@@ -1293,6 +1313,87 @@ class MusicPlayerApp:
     def _version_label(self):
         return "v%s | ID: %s" % (APP_VERSION, self.install_id)
 
+    def _play_intro(self):
+        try:
+            enabled = bool(self.settings.get("intro"))
+        except Exception:
+            enabled = True
+        if not enabled:
+            return
+        duration = 2.2
+        start = time.monotonic()
+        event = SDL_Event()
+        while True:
+            elapsed = time.monotonic() - start
+            if elapsed >= duration:
+                break
+            while self.runtime.SDL_PollEvent(ctypes.byref(event)):
+                if event.type == SDL_QUIT:
+                    get_logger().info("quit during intro")
+                    self.running = False
+                    return
+                try:
+                    self.input.feed(event)
+                except Exception:
+                    pass
+            try:
+                if self.input.poll():
+                    break
+            except Exception:
+                pass
+            self._render_intro_frame(min(1.0, elapsed / duration))
+            try:
+                self.runtime.SDL_Delay(16)
+            except Exception:
+                break
+
+    def _intro_letter_layout(self):
+        letters = "NLK"
+        try:
+            widths = [self.measure(letter, "hero")[0] for letter in letters]
+        except Exception:
+            widths = [60, 60, 60]
+        spacing = 18
+        total = sum(widths) + spacing * (len(letters) - 1)
+        cursor = (self.width - total) // 2
+        positions = []
+        for letter, width in zip(letters, widths):
+            positions.append((letter, cursor))
+            cursor += width + spacing
+        return positions
+
+    def _render_intro_frame(self, progress):
+        progress = max(0.0, min(1.0, float(progress)))
+        self.fill(0, 0, self.width, self.height, self.INTRO_BG)
+        center_y = self.height // 2
+        layout = self._intro_letter_layout()
+        for index, (letter, x) in enumerate(layout):
+            enter_at = 0.05 + index * 0.16
+            local = (progress - enter_at) / 0.30
+            if local <= 0.0:
+                continue
+            local = min(1.0, local)
+            rise = int((1.0 - local) * 60)
+            dark, bright = (60, 5, 8, 255), self.INTRO_RED
+            blend = min(1.0, local * 1.5)
+            color = tuple(
+                int(dark[channel] + (bright[channel] - dark[channel]) * blend)
+                for channel in range(3)
+            ) + (255,)
+            if local < 0.45:
+                font = "small"
+            elif local < 0.75:
+                font = "body"
+            else:
+                font = "hero"
+            self.text(letter, x, center_y - 30 + rise, font, color)
+        if progress > 0.72:
+            sweep = (progress - 0.72) / 0.28
+            for index, (letter, x) in enumerate(layout):
+                center = index / 2.0
+                if abs(sweep - center * 0.9) < 0.18:
+                    self.text(letter, x, center_y - 30, "hero", self.ON_ACCENT)
+
     def _render_library(self):
         if getattr(self, "library_mode", "") == "drive":
             self._render_drive()
@@ -1327,9 +1428,9 @@ class MusicPlayerApp:
             selected = index == self.selection
             if selected:
                 self.fill(18, y - 5, self.width - 36, 48, self.ACCENT)
-            color = self.TEXT if selected else self.TEXT
-            dim_color = self.TEXT if selected else self.MUTED
-            spec_color = self.TEXT if selected else self.SPEC
+            color = self.ON_ACCENT if selected else self.TEXT
+            dim_color = self.ON_ACCENT if selected else self.MUTED
+            spec_color = self.ON_ACCENT if selected else self.SPEC
             entry = entries[index]
             if self.library_mode in ("playlists", "favorite_playlists"):
                 favorite = self.collections.is_playlist_favorite(entry)
@@ -1387,9 +1488,9 @@ class MusicPlayerApp:
             selected = index == self.selection
             if selected:
                 self.fill(18, y - 5, self.width - 36, 48, self.ACCENT)
-            color = self.TEXT if selected else self.TEXT
-            dim_color = self.TEXT if selected else self.MUTED
-            spec_color = self.TEXT if selected else self.SPEC
+            color = self.ON_ACCENT if selected else self.TEXT
+            dim_color = self.ON_ACCENT if selected else self.MUTED
+            spec_color = self.ON_ACCENT if selected else self.SPEC
             row = rows[index]
             if row == "__more__":
                 title, detail, spec = "More... (next page)", "", ""
@@ -1449,7 +1550,7 @@ class MusicPlayerApp:
         bar_x = 60
         bar_w = max(120, self.width - 120)
         prog_y = title_y + 64
-        self.fill(bar_x, prog_y, bar_w, 8, self.PANEL)
+        self.fill(bar_x, prog_y, bar_w, 8, self.TRACK)
         ratio = min(1.0, position / duration) if duration > 0 else 0.0
         self.fill(bar_x, prog_y, int(bar_w * ratio), 8, self.ACCENT)
         elapsed = self._format_time(position)
@@ -1458,31 +1559,10 @@ class MusicPlayerApp:
         self.text(elapsed, bar_x, times_y, "small", self.MUTED)
         total_width = self.measure(total, "small")[0]
         self.text(total, bar_x + bar_w - total_width, times_y, "small", self.MUTED)
-        try:
-            source_rate, source_bits = track_audio_info(track.path)
-        except Exception:
-            source_rate, source_bits = (0, 0)
-        try:
-            output_rate = int(getattr(getattr(self.player, "equalizer", None), "sample_rate", 0) or 0)
-        except Exception:
-            output_rate = 0
-        info_y = times_y + 22
-        if source_rate and output_rate and source_rate != output_rate:
-            self.text(
-                "CONVERTED  %d -> %d" % (source_rate, output_rate),
-                center_x, info_y, "small", self.GOLD, center=True,
-            )
-        elif source_rate:
-            self.text(
-                "DIRECT  %s" % format_spec(track.path),
-                center_x, info_y, "small", self.GOLD, center=True,
-            )
-        format_line = self._format_line(track, source_rate, source_bits, output_rate)
-        self.text(format_line, center_x, info_y + 18, "small", self.MUTED, center=True)
         self.text(
-            self._playback_status_line(), center_x, info_y + 36, "small", self.MUTED, center=True,
+            self._playback_status_line(), center_x, times_y + 24, "small", self.MUTED, center=True,
         )
-        content_bottom = info_y + 58
+        content_bottom = times_y + 24 + 22
         status_top = self.height - 62 - 38
         spec_base = status_top - 20
         max_h = status_top - content_bottom - 32
@@ -1650,8 +1730,8 @@ class MusicPlayerApp:
             selected = index == self.quick_menu_selection
             if selected:
                 self.fill(x + 24, row_y - 8, width - 48, 48, self.ACCENT)
-            key_color = self.TEXT if selected else self.ACCENT
-            value_color = self.TEXT if selected else self.TEXT
+            key_color = self.ON_ACCENT if selected else self.ACCENT
+            value_color = self.ON_ACCENT if selected else self.TEXT
             key, value = self._split_label(label)
             if value:
                 self.text(self.ellipsize(key, value_x - x - 60, "body"), x + 45, row_y, "body", key_color)
@@ -1666,6 +1746,7 @@ class MusicPlayerApp:
         footer_height = 62
         y = self.height - footer_height
         self.fill(0, y, self.width, footer_height, self.PANEL)
+        self.fill(0, y, self.width, 2, self.ACCENT)
         state = "SHUFFLE %s   REPEAT %s   VOL %d%%" % (
             "ON" if self.settings.get("shuffle") else "OFF",
             str(self.settings.get("repeat")).upper(), self.settings.get("volume"),
@@ -1687,7 +1768,7 @@ class MusicPlayerApp:
         if self.status:
             color = self.ERROR if self.status_error else self.ACCENT
             self.fill(0, y - 38, self.width, 38, color)
-            text_color = self.TEXT
+            text_color = self.ON_ACCENT
             self.text(self.ellipsize(self.status, self.width - 40, "small"), 20, y - 31, "small", text_color)
 
     def _render_exit_confirmation(self):

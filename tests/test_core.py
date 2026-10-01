@@ -1031,11 +1031,87 @@ class TruepodStyleTests(unittest.TestCase):
         )
         self.assertEqual(MusicPlayerApp._split_label("Close Menu"), ("Close Menu", ""))
 
-    def test_theme_uses_truepod_red_accent(self):
-        red, green, blue, _alpha = MusicPlayerApp.ACCENT
-        self.assertGreater(red, 150)
-        self.assertGreater(red, green + 60)
-        self.assertGreater(red, blue + 60)
+    def test_theme_uses_bright_fresh_tones(self):
+        red, green, blue, _alpha = MusicPlayerApp.BG
+        self.assertGreater((red + green + blue) / 3.0, 180.0)
+        text_red, text_green, text_blue, _alpha = MusicPlayerApp.TEXT
+        self.assertLess((text_red + text_green + text_blue) / 3.0, 80.0)
+        panel = MusicPlayerApp.PANEL[:3]
+        self.assertGreater(sum(panel) / 3.0, 200.0)
+
+    def test_now_playing_hides_direct_converted_lines(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.width = 640
+        app.height = 480
+        app.settings = mock.Mock()
+        app.settings.get.return_value = True
+        app.player = mock.Mock()
+        app.player.current = mock.Mock(path="/music/song.flac", title="Song", folder="Album")
+        app.player.position.return_value = 10.0
+        app.player.duration.return_value = 120.0
+        app.player.equalizer.sample_rate = 44100
+        app.player.output_device = "System"
+        drawn = []
+        app.text = lambda *args, **kwargs: drawn.append(args[0])
+        app.fill = lambda *args: None
+        app.measure = lambda *args, **kwargs: (10, 10)
+        app.ellipsize = lambda text, *args, **kwargs: text
+        app._fit_title = lambda title, max_width: (title, "title")
+        app._render_spectrum = lambda *args, **kwargs: None
+        app._render_playing()
+        blob = "\n".join(str(line) for line in drawn)
+        self.assertNotIn("DIRECT", blob)
+        self.assertNotIn("CONVERTED", blob)
+        self.assertIn("Song", blob)
+
+    def test_intro_splash_draws_nlk_and_is_skippable(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.width = 640
+        app.height = 480
+        values = {"intro": True}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        drawn = []
+        app.text = lambda *args, **kwargs: drawn.append(args[0])
+        app.fill = lambda *args: None
+        app.measure = lambda *args, **kwargs: (40, 40)
+        app._render_intro_frame(1.0)
+        letters = [letter for letter in drawn if letter in ("N", "L", "K")]
+        self.assertEqual(letters[:3], ["N", "L", "K"])
+        app.runtime = mock.Mock()
+        app.runtime.SDL_PollEvent.return_value = 0
+        app.input = mock.Mock()
+        app.input.poll.return_value = [{"action": "a"}]
+        with mock.patch("musicplayer.ui.time.monotonic", side_effect=[0.0, 0.0, 999.0]):
+            app._play_intro()
+        app.runtime.SDL_Delay.assert_not_called()
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.leds = mock.Mock(test_index=-1)
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        self.assertIn("intro", [entry[0] for entry in app._quick_menu_entries()])
+        self.assertFalse(app._toggle_intro())
+
+    def test_intro_defaults_on_and_toggle_saves(self):
+        with tempfile.TemporaryDirectory() as root:
+            fresh = Settings(os.path.join(root, "settings.json")).load()
+        self.assertTrue(fresh.get("intro"))
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"intro": True, "auto_report_errors": False, "audio_output": "auto",
+                  "led_mode": "spectrum", "spectrum": True}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.leds = mock.Mock(test_index=-1)
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        self.assertIn("intro", [entry[0] for entry in app._quick_menu_entries()])
+        self.assertFalse(app._toggle_intro())
+        app.settings.save.assert_called_once()
 
     def test_playback_status_line_mentions_controls(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)

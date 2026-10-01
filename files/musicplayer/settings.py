@@ -19,6 +19,7 @@ DEFAULTS = {
     "auto_report_errors": False,
     "led_mode": "spectrum",
     "spectrum": True,
+    "intro": True,
     "drive_folder_id": "1KB8-kxt0QSpgBSQw4VMIQmYCGS3F2D2a",
     "drive_api_key": "",
 }
@@ -71,6 +72,7 @@ class Settings:
         if self.values.get("led_mode") not in ("off", "beat", "spectrum"):
             self.values["led_mode"] = "spectrum"
         self.values["spectrum"] = bool(self.values.get("spectrum", True))
+        self.values["intro"] = bool(self.values.get("intro", True))
         try:
             from .drive import DEFAULT_FOLDER_ID, extract_folder_id
         except Exception:
