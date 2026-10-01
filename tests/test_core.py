@@ -1739,6 +1739,16 @@ class InputRemapTests(unittest.TestCase):
         state.feed(event)
         self.assertEqual(state.poll(), ["stick_up", "stick_down"])
 
+    def test_joy_axis_motion_uses_real_event_struct(self):
+        from musicplayer.sdl_runtime import SDL_Event, SDL_JOYAXISMOTION
+        state = InputState(clock=lambda: 0.0)
+        event = SDL_Event()
+        event.type = SDL_JOYAXISMOTION
+        event.jaxis.axis = 1
+        event.jaxis.value = -20000
+        state.feed(event)
+        self.assertEqual(state.poll(), ["stick_up"])
+
 
 class LibraryPagingTests(unittest.TestCase):
     def _app(self):
@@ -1773,6 +1783,14 @@ class LibraryPagingTests(unittest.TestCase):
         app = self._app()
         app._handle("prev")
         app.player.advance.assert_called_once_with(False)
+        self.assertEqual(app.screen, "playing")
+
+    def test_l1_r1_ignored_while_listening(self):
+        app = self._app()
+        app.screen = "playing"
+        app._handle("l1")
+        app._handle("r1")
+        app.player.advance.assert_not_called()
         self.assertEqual(app.screen, "playing")
 
     def test_stick_moves_selection(self):

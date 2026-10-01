@@ -404,7 +404,10 @@ class MusicPlayerApp:
                         get_logger().info("received SDL quit event")
                         self.running = False
                     else:
-                        self.input.feed(event)
+                        try:
+                            self.input.feed(event)
+                        except Exception as error:
+                            get_logger().warning("ignoring bad input event: %s", error)
                 actions = self.input.poll()
                 if self.display.is_off and actions:
                     self.display.restore()
@@ -482,6 +485,8 @@ class MusicPlayerApp:
             forward = action in ("r1", "next")
             if self.screen == "library" and action in ("l1", "r1"):
                 self._page_selection(1 if forward else -1)
+                return
+            if action in ("l1", "r1"):
                 return
             self.player.advance(forward)
             if self.screen == "library":

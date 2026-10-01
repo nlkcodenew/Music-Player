@@ -95,11 +95,20 @@ class SDL_JoyHatEvent(Structure):
     ]
 
 
+class SDL_JoyAxisEvent(Structure):
+    _fields_ = [
+        ("type", c_uint32), ("timestamp", c_uint32), ("which", c_int32),
+        ("axis", c_uint8), ("padding1", c_uint8), ("padding2", c_uint8),
+        ("padding3", c_uint8), ("value", c_int16), ("padding4", c_uint16),
+    ]
+
+
 class SDL_Event(Union):
     _fields_ = [
         ("type", c_uint32), ("key", SDL_KeyboardEvent),
         ("cbutton", SDL_ControllerButtonEvent), ("caxis", SDL_ControllerAxisEvent),
         ("jbutton", SDL_JoyButtonEvent), ("jhat", SDL_JoyHatEvent),
+        ("jaxis", SDL_JoyAxisEvent),
         ("padding", c_uint8 * 56),
     ]
 
