@@ -522,7 +522,7 @@ class MusicPlayerApp:
                 else:
                     self._cycle_library_mode()
             else:
-                self._cycle_repeat()
+                self._save_current_to_device()
             return
         if self.screen == "library":
             if self.library_mode == "source":
@@ -1321,24 +1321,27 @@ class MusicPlayerApp:
             self.status = "Select an audio track to download"
             self.status_error = True
             return False
+        self.status = "Downloading %s..." % row.title
+        self.status_error = False
+        return self._save_entry_offline(row, self._drive_album_label()) is not None
+
+    def _save_entry_offline(self, entry, album):
         try:
             app_dir = self.paths.app_dir
             music_dir = self.paths.music_dir
         except Exception as error:
             self.status = "Drive paths unavailable: %s" % error
             self.status_error = True
-            return False
-        self.status = "Downloading %s..." % row.title
-        self.status_error = False
+            return None
         try:
             destination = drive_download_offline(
-                app_dir, music_dir, self._drive_album_label(), row, self._drive_api_key(),
+                app_dir, music_dir, album, entry, self._drive_api_key(),
             )
         except DriveError as error:
             self.status = "Drive download: %s" % error
             self.status_error = True
             get_logger().warning("drive download failed: %s", error)
-            return False
+            return None
         self.status = "Saved to device%s - find it in LOCAL" % destination[len(music_dir):].lstrip("/\\")
         self.status_error = False
         get_logger().info("drive offline saved=%s", destination)
@@ -1347,7 +1350,42 @@ class MusicPlayerApp:
             self.tracks = scan_library(music_dir)
         except Exception as error:
             get_logger().warning("library rescan failed: %s", error)
-        return True
+        return destination
+
+    def _save_current_to_device(self):
+        track = self.player.current if getattr(self, "player", None) else None
+        if track is None:
+            self.status = "Nothing is playing"
+            self.status_error = True
+            return False
+        if not getattr(track, "path", "").startswith("drive://"):
+            self.status = "Already on this device"
+            self.status_error = False
+            return True
+        remainder = track.path[len("drive://"):]
+        file_id = remainder.split("/", 1)[0]
+        filename = remainder.split("/", 1)[1] if "/" in remainder else "track"
+        known = next(
+            (item for item in (getattr(self, "drive_entries", []) or [])
+             if getattr(item, "file_id", "") == file_id),
+            None,
+        )
+        if known is not None:
+            entry = known
+        else:
+            import os as _os
+            entry = DriveEntry(
+                file_id=file_id,
+                name=filename,
+                mime_type="",
+                size=0,
+                is_folder=False,
+                title=filename.rsplit(".", 1)[0],
+                extension=_os.path.splitext(filename)[1].lower(),
+            )
+        self.status = "Downloading %s..." % entry.title
+        self.status_error = False
+        return self._save_entry_offline(entry, self._drive_album_label()) is not None
 
     def _toggle_favorite(self):
         if getattr(self, "library_mode", "") == "source":
@@ -1786,7 +1824,7 @@ class MusicPlayerApp:
             repeat = self.settings.get("repeat")
         except Exception:
             repeat = "off"
-        return "%s   X shuffle %s   Y repeat %s" % (state, shuffle, repeat)
+        return "%s   L2 shuffle %s   R2 repeat %s" % (state, shuffle, repeat)
 
     def _render_spectrum(self, baseline_y, max_h=160, gain=3.0):
         try:
@@ -1925,7 +1963,7 @@ class MusicPlayerApp:
         y = self.height - footer_height
         self.fill(0, y, self.width, footer_height, self.PANEL)
         self.fill(0, y, self.width, 2, self.ACCENT)
-        state = "SHUFFLE %s   REPEAT %s" % (
+        state = "L2 SHUFFLE %s   R2 REPEAT %s" % (
             "ON" if self.settings.get("shuffle") else "OFF",
             str(self.settings.get("repeat")).upper(),
         )
@@ -1940,9 +1978,9 @@ class MusicPlayerApp:
             else:
                 hint = "A OPEN/PLAY  X FAVORITE  Y VIEW"
         elif self.screen == "lyrics":
-            hint = "A PAUSE  X TRANSLATION  SELECT MENU"
+            hint = "A PAUSE  X TRANSLATION  Y SAVE  SELECT MENU"
         else:
-            hint = "A PAUSE/RESUME  X FAVORITE  SELECT MENU"
+            hint = "A PAUSE  X FAVORITE  Y SAVE  SELECT MENU"
         hint_width = self.measure(hint, "small")[0]
         self.text(hint, self.width - 24 - hint_width, y + 18, "small")
         if self.status:

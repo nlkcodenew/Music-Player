@@ -1183,6 +1183,45 @@ class TruepodStyleTests(unittest.TestCase):
         self.assertIn("shuffle off", line)
         self.assertIn("repeat all", line)
         self.assertNotIn("vol", line)
+        self.assertIn("L2", line)
+        self.assertIn("R2", line)
+
+    def test_y_saves_current_drive_track(self):
+        import musicplayer.ui as ui_module
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"drive_folder_id": "FOLDERID1234567890", "drive_api_key": ""}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.player = mock.Mock()
+        app.player.current = mock.Mock(path="drive://FILEID1234567890/song.flac", title="song")
+        app.paths = mock.Mock(app_dir="/app", data_dir="/data", music_dir="/music")
+        app.screen = "playing"
+        app.update_busy = False
+        app.quick_menu = False
+        app.exit_confirmation = False
+        app.drive_stack = []
+        app.drive_entries = []
+        app.tracks = []
+        app.status = ""
+        app.status_error = True
+        with mock.patch.object(ui_module, "drive_download_offline", return_value="/music/Drive/Drive/song.flac"), \
+                mock.patch("musicplayer.library.scan_library", return_value=["t"]):
+            app._handle("y")
+        self.assertIn("Saved to device", app.status)
+        self.assertEqual(app.tracks, ["t"])
+
+    def test_y_reports_local_track_already_saved(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.settings = mock.Mock()
+        app.player = mock.Mock()
+        app.player.current = mock.Mock(path="/music/song.mp3", title="song")
+        app.screen = "playing"
+        app.update_busy = False
+        app.quick_menu = False
+        app.exit_confirmation = False
+        app.status = ""
+        app._handle("y")
+        self.assertEqual(app.status, "Already on this device")
 
     def test_l2_r2_control_shuffle_and_repeat(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
@@ -1204,7 +1243,7 @@ class TruepodStyleTests(unittest.TestCase):
         self.assertIn("Repeat: All", app.status)
         app._handle("r2")
         self.assertEqual(values["repeat"], "one")
-        app._handle("y")
+        app._handle("r2")
         self.assertEqual(values["repeat"], "off")
         app.settings.save.assert_called()
 
