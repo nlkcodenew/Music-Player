@@ -931,5 +931,94 @@ class VisualSettingsTests(unittest.TestCase):
         self.assertTrue(text.endswith("..."))
 
 
+class TruepodStyleTests(unittest.TestCase):
+    def test_wav_spec_is_parsed(self):
+        import wave
+        from musicplayer import audio_format
+        audio_format.clear_cache()
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "song.wav")
+            with wave.open(path, "wb") as handle:
+                handle.setnchannels(2)
+                handle.setsampwidth(2)
+                handle.setframerate(44100)
+                handle.writeframes(b"\x00\x00" * 100)
+            self.assertEqual(audio_format.track_audio_info(path), (44100, 16))
+            self.assertEqual(audio_format.format_spec(path), "44.1k/16")
+
+    def test_flac_spec_is_parsed(self):
+        from musicplayer import audio_format
+        audio_format.clear_cache()
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "song.flac")
+            rate, bits = (48000, 24)
+            head = b"\x10\x10" + b"\x00" * 8
+            tail = bytes([(rate >> 12) & 0xFF, (rate >> 4) & 0xFF,
+                          ((rate & 0x0F) << 4) | 0x03,
+                          (((bits - 1) & 0x0F) << 4)])
+            streaminfo = (head + tail + b"\x00" * 20)
+            self.assertEqual(len(streaminfo), 34)
+            with open(path, "wb") as handle:
+                handle.write(b"fLaC" + b"\x80" + b"\x00\x00\x22" + streaminfo)
+            self.assertEqual(audio_format.track_audio_info(path), (48000, 24))
+            self.assertEqual(audio_format.format_spec(path), "48.0k/24")
+
+    def test_mp3_and_unknown_specs_fall_back(self):
+        from musicplayer import audio_format
+        audio_format.clear_cache()
+        with tempfile.TemporaryDirectory() as root:
+            mp3 = os.path.join(root, "song.mp3")
+            with open(mp3, "wb") as handle:
+                handle.write(b"\xFF\xFB\x90\x00" + b"\x00" * 100)
+            self.assertEqual(audio_format.track_audio_info(mp3)[0], 44100)
+            self.assertEqual(audio_format.format_spec(mp3), "44.1k")
+            ogg = os.path.join(root, "song.ogg")
+            with open(ogg, "wb") as handle:
+                handle.write(b"OggS" + b"\x00" * 100)
+            self.assertEqual(audio_format.format_spec(ogg), "OGG")
+
+    def test_peaks_hold_above_levels_then_fall(self):
+        import struct
+        from musicplayer.visuals import SpectrumAnalyser
+        analyser = SpectrumAnalyser()
+        pcm = struct.pack("<512h", *([4000] * 512))
+        for _ in range(5):
+            analyser.offer(pcm)
+            analyser._last_tap = 0.0
+        peaks = analyser.snapshot_peaks()
+        levels = analyser.snapshot()[0]
+        self.assertEqual(len(peaks), len(levels))
+        self.assertTrue(all(p >= v for p, v in zip(peaks, levels)))
+        self.assertGreater(max(peaks), 0.0)
+        for _ in range(20):
+            analyser.decay()
+        self.assertLess(max(analyser.snapshot_peaks()), max(peaks))
+
+    def test_quick_menu_labels_split_into_key_and_value(self):
+        self.assertEqual(
+            MusicPlayerApp._split_label("Equalizer: Rock"), ("Equalizer", "Rock"),
+        )
+        self.assertEqual(MusicPlayerApp._split_label("Close Menu"), ("Close Menu", ""))
+
+    def test_theme_uses_truepod_red_accent(self):
+        red, green, blue, _alpha = MusicPlayerApp.ACCENT
+        self.assertGreater(red, 150)
+        self.assertGreater(red, green + 60)
+        self.assertGreater(red, blue + 60)
+
+    def test_playback_status_line_mentions_controls(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.runtime = mock.Mock()
+        app.runtime.Mix_PausedMusic.return_value = 0
+        values = {"shuffle": False, "repeat": "all", "volume": 14}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        line = app._playback_status_line()
+        self.assertIn("Playing", line)
+        self.assertIn("shuffle off", line)
+        self.assertIn("repeat all", line)
+        self.assertIn("vol 14", line)
+
+
 if __name__ == "__main__":
     unittest.main()

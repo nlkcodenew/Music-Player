@@ -9,6 +9,7 @@ from .collections import Collections
 from .display import DisplayController
 from .input import InputState
 from .identity import installation_id
+from .audio_format import format_rate, format_spec, track_audio_info
 from .leds import LedController
 from .logger import get_logger
 from .lyrics import load_lyrics
@@ -37,11 +38,14 @@ from .updater import apply_update, fetch_manifest, update_available
 
 
 class MusicPlayerApp:
-    BG = (13, 17, 28, 255)
-    PANEL = (20, 28, 46, 255)
-    ACCENT = (0, 230, 170, 255)
-    TEXT = (242, 245, 250, 255)
-    MUTED = (150, 160, 180, 255)
+    BG = (6, 7, 11, 255)
+    PANEL = (15, 17, 23, 255)
+    ACCENT = (222, 75, 50, 255)
+    ACCENT_DIM = (120, 40, 30, 255)
+    TEXT = (238, 232, 222, 255)
+    MUTED = (140, 135, 125, 255)
+    SPEC = (255, 140, 40, 255)
+    GOLD = (255, 195, 60, 255)
     ERROR = (105, 32, 42, 255)
 
     def __init__(self, paths, tracks):
@@ -741,7 +745,7 @@ class MusicPlayerApp:
         self.selection = min(self.selection, max(0, len(entries) - 1))
 
     def visible_rows(self):
-        return max(3, (self.height - 160) // 52)
+        return max(3, (self.height - 190) // 52)
 
     def fill(self, x, y, width, height, color):
         self.runtime.SDL_SetRenderDrawColor(self.renderer, *color)
@@ -832,31 +836,52 @@ class MusicPlayerApp:
             detail = "Press Y to change view" if self.tracks else self.paths.music_dir
             self.text(detail, self.width // 2, self.height // 2 + 25, "small", self.MUTED, center=True)
             return
+        try:
+            crumb = self.active_playlist or getattr(self.paths, "music_dir", "")
+            self.text(
+                self.ellipsize(str(crumb), self.width - 56, "small"),
+                28, 74, "small", self.MUTED,
+            )
+        except Exception:
+            pass
         rows = self.visible_rows()
         self.scroll = min(self.scroll, self.selection)
         if self.selection >= self.scroll + rows:
             self.scroll = self.selection - rows + 1
-        y = 82
+        spec_width = 150
+        y = 104
         for index in range(self.scroll, min(len(entries), self.scroll + rows)):
             selected = index == self.selection
             if selected:
                 self.fill(18, y - 5, self.width - 36, 48, self.ACCENT)
-            color = self.BG if selected else self.TEXT
-            folder_color = self.BG if selected else self.MUTED
+            color = self.TEXT if selected else self.TEXT
+            dim_color = self.TEXT if selected else self.MUTED
+            spec_color = self.TEXT if selected else self.SPEC
             entry = entries[index]
             if self.library_mode in ("playlists", "favorite_playlists"):
                 favorite = self.collections.is_playlist_favorite(entry)
                 title = ("* " if favorite else "") + entry
                 count = len([track for track in self.tracks if track.folder == entry])
                 detail = "%d tracks" % count
+                spec = ""
             else:
                 favorite = self.collections.is_track_favorite(entry.path)
                 title = ("* " if favorite else "") + entry.title
                 detail = entry.folder
-            self.text(self.ellipsize(title, self.width - 330), 32, y, "body", color)
+                try:
+                    spec = format_spec(entry.path)
+                except Exception:
+                    spec = ""
+            self.text(
+                self.ellipsize(title, self.width - 330 - spec_width, "body"),
+                32, y, "body", color,
+            )
             detail = self.ellipsize(detail, 245, "small")
             detail_width = self.measure(detail, "small")[0]
-            self.text(detail, self.width - 32 - detail_width, y + 5, "small", folder_color)
+            self.text(detail, self.width - 32 - detail_width - spec_width, y + 5, "small", dim_color)
+            if spec:
+                spec_width_px = self.measure(spec, "small")[0]
+                self.text(spec, self.width - 28 - spec_width_px, y + 5, "small", spec_color)
             y += 52
 
     def _fit_title(self, title, max_width):
@@ -880,48 +905,96 @@ class MusicPlayerApp:
         offset = max(0, (self.height - 480) // 2 - 20)
         max_w = max(200, self.width - 80)
         title_text, title_font = self._fit_title(track.title, max_w)
-        title_y = 84 + offset
+        title_y = 82 + offset
         self.text(title_text, center_x, title_y, title_font, center=True)
-        folder_y = title_y + 44
         try:
-            folder_text = self.ellipsize(track.folder or "", max_w, "body")
+            folder_text = self.ellipsize(track.folder or "", max_w, "small")
         except Exception:
             folder_text = track.folder or ""
-        self.text(folder_text, center_x, folder_y, "body", self.MUTED, center=True)
-        modes = []
-        repeat = self.settings.get("repeat")
-        if repeat != "off":
-            modes.append("REPEAT %s" % repeat.upper())
-        if self.settings.get("shuffle"):
-            modes.append("SHUFFLE ON")
-        modes_y = folder_y + 30
-        if modes:
-            self.text(" | ".join(modes), center_x, modes_y, "small", self.ACCENT, center=True)
-            prog_y = modes_y + 30
-        else:
-            prog_y = folder_y + 34
+        self.text(folder_text, center_x, title_y + 42, "small", self.MUTED, center=True)
         position = self.player.position()
         duration = self.player.duration()
-        progress_width = self.width - 160
-        self.fill(80, prog_y, progress_width, 10, self.PANEL)
+        bar_x = 60
+        bar_w = max(120, self.width - 120)
+        prog_y = title_y + 76
+        self.fill(bar_x, prog_y, bar_w, 6, self.PANEL)
         ratio = min(1.0, position / duration) if duration > 0 else 0.0
-        self.fill(80, prog_y, progress_width * ratio, 10, self.ACCENT)
+        self.fill(bar_x, prog_y, int(bar_w * ratio), 6, self.ACCENT)
         elapsed = self._format_time(position)
         total = self._format_time(duration) if duration else "--:--"
-        time_y = prog_y + 20
-        self.text("%s / %s" % (elapsed, total), center_x, time_y, "body", center=True)
-        spec_base = time_y + 104
-        self._render_spectrum(spec_base, 84)
-        state = "PAUSED" if self.runtime.Mix_PausedMusic() else "PLAYING"
-        state_y = spec_base + 18
-        self.text(state, center_x, state_y, "small", self.ACCENT, center=True)
-        button = "A  RESUME" if self.runtime.Mix_PausedMusic() else "A  PAUSE"
-        button_width = 210
-        button_y = state_y + 26
-        self.fill(center_x - button_width // 2, button_y, button_width, 44, self.ACCENT)
-        self.text(button, center_x, button_y + 9, "body", self.BG, center=True)
+        times_y = prog_y + 12
+        self.text(elapsed, bar_x, times_y, "small", self.MUTED)
+        total_width = self.measure(total, "small")[0]
+        self.text(total, bar_x + bar_w - total_width, times_y, "small", self.MUTED)
+        try:
+            source_rate, source_bits = track_audio_info(track.path)
+        except Exception:
+            source_rate, source_bits = (0, 0)
+        try:
+            output_rate = int(getattr(getattr(self.player, "equalizer", None), "sample_rate", 0) or 0)
+        except Exception:
+            output_rate = 0
+        info_y = times_y + 26
+        if source_rate and output_rate and source_rate != output_rate:
+            self.text(
+                "CONVERTED  %d -> %d" % (source_rate, output_rate),
+                center_x, info_y, "small", self.GOLD, center=True,
+            )
+        elif source_rate:
+            self.text(
+                "DIRECT  %s" % format_spec(track.path),
+                center_x, info_y, "small", self.GOLD, center=True,
+            )
+        format_line = self._format_line(track, source_rate, source_bits, output_rate)
+        self.text(format_line, center_x, info_y + 22, "small", self.MUTED, center=True)
+        self.text(
+            self._playback_status_line(), center_x, info_y + 44, "small", self.MUTED, center=True,
+        )
+        spec_base = info_y + 150
+        self._render_spectrum(spec_base, 100)
 
-    def _render_spectrum(self, baseline_y, max_h=84):
+    def _format_line(self, track, source_rate, source_bits, output_rate):
+        try:
+            output_label = getattr(self.player, "output_device", "") or ""
+        except Exception:
+            output_label = ""
+        if "USB" in output_label:
+            output_name = "USB DAC"
+        elif output_label:
+            output_name = "Built-in"
+        else:
+            output_name = "Built-in"
+        if source_rate and output_rate:
+            source_text = "%d Hz" % source_rate
+            if source_bits:
+                source_text += "/%d-bit" % source_bits
+            return "%s -> %d Hz/16-bit   %s" % (source_text, output_rate, output_name)
+        try:
+            return "%s   %s" % (format_spec(track.path), output_name)
+        except Exception:
+            return output_name
+
+    def _playback_status_line(self):
+        try:
+            paused = bool(self.runtime.Mix_PausedMusic())
+        except Exception:
+            paused = False
+        state = "Paused" if paused else "Playing"
+        try:
+            shuffle = "on" if self.settings.get("shuffle") else "off"
+        except Exception:
+            shuffle = "off"
+        try:
+            repeat = self.settings.get("repeat")
+        except Exception:
+            repeat = "off"
+        try:
+            volume = int(self.settings.get("volume"))
+        except Exception:
+            volume = 0
+        return "%s   X shuffle %s   Y repeat %s   vol %d" % (state, shuffle, repeat, volume)
+
+    def _render_spectrum(self, baseline_y, max_h=100):
         try:
             enabled = bool(self.settings.get("spectrum"))
         except Exception:
@@ -931,34 +1004,44 @@ class MusicPlayerApp:
         levels, _rms, beat = self._visual_snapshot()
         if not levels:
             return
+        try:
+            peaks = tuple(getattr(getattr(self, "player", None), "analyser", None).peaks)
+            if len(peaks) != len(levels):
+                peaks = tuple(levels)
+        except Exception:
+            peaks = tuple(levels)
         count = len(levels)
-        area_x = 80
-        area_w = max(120, self.width - 160)
-        gap = 8 if count <= 14 else 5
-        bar_w = max(10, (area_w - gap * (count - 1)) // count)
+        area_x = 40
+        area_w = max(120, self.width - 80)
+        gap = 6 if count <= 14 else 4
+        bar_w = max(8, (area_w - gap * (count - 1)) // count)
         total_w = bar_w * count + gap * (count - 1)
         start_x = area_x + (area_w - total_w) // 2
-        low_color = self.ACCENT
-        mid_color = (255, 200, 0, 255)
-        top_color = self.TEXT if beat else (255, 90, 60, 255)
+        body = self.ACCENT
+        dark = self.ACCENT_DIM
         for index, raw in enumerate(levels):
             try:
                 level = max(0.0, min(1.0, float(raw)))
             except (TypeError, ValueError):
                 level = 0.0
-            height = int(level * max_h) + (3 if level > 0.02 else 0)
-            if height <= 0:
-                continue
-            low_h = int(height * 0.55)
-            mid_h = int(height * 0.25)
-            top_h = height - low_h - mid_h
+            try:
+                peak = max(0.0, min(1.0, float(peaks[index])))
+            except (IndexError, TypeError, ValueError):
+                peak = level
+            peak = max(peak, level)
+            height = int(level * max_h) + (2 if level > 0.02 else 0)
             x = start_x + index * (bar_w + gap)
-            if low_h > 0:
-                self.fill(x, baseline_y - low_h, bar_w, low_h, low_color)
-            if mid_h > 0:
-                self.fill(x, baseline_y - low_h - mid_h, bar_w, mid_h, mid_color)
-            if top_h > 0:
-                self.fill(x, baseline_y - height, bar_w, top_h, top_color)
+            if height > 0:
+                low_h = int(height * 0.5)
+                if low_h > 0:
+                    self.fill(x, baseline_y - low_h, bar_w, low_h, dark)
+                if height - low_h > 0:
+                    self.fill(x, baseline_y - height, bar_w, height - low_h, body)
+            cap_h = int(peak * max_h)
+            cap_y = baseline_y - cap_h - 2
+            if cap_y < baseline_y - max_h - 6:
+                cap_y = baseline_y - max_h - 6
+            self.fill(x, cap_y, bar_w, 3, self.TEXT)
 
     def _render_lyrics(self):
         track = self.player.current
@@ -992,6 +1075,16 @@ class MusicPlayerApp:
             else:
                 y += 65
 
+    @staticmethod
+    def _split_label(label):
+        if ":" in label:
+            key, _, value = label.partition(":")
+            key = key.strip()
+            value = value.strip()
+            if key and value:
+                return (key, value)
+        return (label, "")
+
     def _render_quick_menu(self):
         entries = self._quick_menu_entries()
         width = min(680, self.width - 80)
@@ -1003,13 +1096,23 @@ class MusicPlayerApp:
         self.fill(x, y, width, height, self.PANEL)
         title = "EQUALIZER" if getattr(self, "quick_menu_page", "main") == "equalizer" else "QUICK MENU"
         self.text(title, self.width // 2, y + 22, "title", center=True)
+        value_x = x + min(300, width // 2)
         for index, (_, label) in enumerate(entries):
             row_y = y + 70 + index * row_height
             selected = index == self.quick_menu_selection
             if selected:
                 self.fill(x + 24, row_y - 8, width - 48, 48, self.ACCENT)
-            color = self.BG if selected else self.TEXT
-            self.text(self.ellipsize(label, width - 90), x + 45, row_y, "body", color)
+            key_color = self.TEXT if selected else self.ACCENT
+            value_color = self.TEXT if selected else self.TEXT
+            key, value = self._split_label(label)
+            if value:
+                self.text(self.ellipsize(key, value_x - x - 60, "body"), x + 45, row_y, "body", key_color)
+                self.text(
+                    self.ellipsize(value, x + width - value_x - 30, "body"),
+                    value_x, row_y, "body", value_color,
+                )
+            else:
+                self.text(self.ellipsize(key, width - 90, "body"), x + 45, row_y, "body", value_color)
 
     def _render_footer(self):
         footer_height = 62
@@ -1033,7 +1136,7 @@ class MusicPlayerApp:
         if self.status:
             color = self.ERROR if self.status_error else self.ACCENT
             self.fill(0, y - 38, self.width, 38, color)
-            text_color = self.TEXT if self.status_error else self.BG
+            text_color = self.TEXT
             self.text(self.ellipsize(self.status, self.width - 40, "small"), 20, y - 31, "small", text_color)
 
     def _render_exit_confirmation(self):

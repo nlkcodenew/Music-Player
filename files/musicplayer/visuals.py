@@ -80,10 +80,13 @@ def _log_band_edges(band_count, bin_count):
 
 
 class SpectrumAnalyser:
+    PEAK_FALL = 0.045
+
     def __init__(self, sample_rate=44100, bands=BAND_COUNT):
         self.sample_rate = max(8000, int(sample_rate or 44100))
         self.bands = max(4, min(24, int(bands or BAND_COUNT)))
         self.levels = [0.0] * self.bands
+        self.peaks = [0.0] * self.bands
         self.rms = 0.0
         self.last_beat = 0.0
         self._last_tap = 0.0
@@ -95,6 +98,7 @@ class SpectrumAnalyser:
 
     def reset(self):
         self.levels = [0.0] * self.bands
+        self.peaks = [0.0] * self.bands
         self.rms = 0.0
         self.last_beat = 0.0
         self._last_tap = 0.0
@@ -149,6 +153,10 @@ class SpectrumAnalyser:
                     self.levels[i] = target
                 else:
                     self.levels[i] = current * 0.62 + target * 0.38
+                if self.levels[i] >= self.peaks[i]:
+                    self.peaks[i] = self.levels[i]
+                else:
+                    self.peaks[i] = max(0.0, self.peaks[i] - self.PEAK_FALL)
             bass = (self.levels[0] + self.levels[1]) / 2.0
             self._bass_history.append(bass)
             if len(self._bass_history) > 14:
@@ -166,6 +174,10 @@ class SpectrumAnalyser:
         beat = (now - self.last_beat) < 0.16
         return (tuple(self.levels), self.rms, beat)
 
+    def snapshot_peaks(self):
+        return tuple(self.peaks)
+
     def decay(self):
         self.levels = [v * 0.7 for v in self.levels]
+        self.peaks = [v * 0.85 for v in self.peaks]
         self.rms *= 0.7
