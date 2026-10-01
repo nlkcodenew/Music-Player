@@ -22,23 +22,35 @@ def _first_existing(paths):
     return ""
 
 
-def _wheel(position):
-    position = int(position) % 96
-    if position < 32:
-        red = 255 - position * 8
-        green = position * 8
-        blue = 0
-    elif position < 64:
-        position -= 32
-        red = 0
-        green = 255 - position * 8
-        blue = position * 8
+def _hsv_to_rgb(hue, saturation, value):
+    hue = float(hue) % 360.0
+    saturation = max(0.0, min(1.0, float(saturation)))
+    value = max(0.0, min(1.0, float(value)))
+    chroma = value * saturation
+    sector = hue / 60.0
+    middle = chroma * (1.0 - abs(sector % 2.0 - 1.0))
+    if sector < 1.0:
+        red, green, blue = chroma, middle, 0.0
+    elif sector < 2.0:
+        red, green, blue = middle, chroma, 0.0
+    elif sector < 3.0:
+        red, green, blue = 0.0, chroma, middle
+    elif sector < 4.0:
+        red, green, blue = 0.0, middle, chroma
+    elif sector < 5.0:
+        red, green, blue = middle, 0.0, chroma
     else:
-        position -= 64
-        red = position * 8
-        green = 0
-        blue = 255 - position * 8
-    return (max(0, min(255, red)), max(0, min(255, green)), max(0, min(255, blue)))
+        red, green, blue = chroma, 0.0, middle
+    lift = value - chroma
+    return (
+        max(0, min(255, int((red + lift) * 255))),
+        max(0, min(255, int((green + lift) * 255))),
+        max(0, min(255, int((blue + lift) * 255))),
+    )
+
+
+def _wheel(position):
+    return _hsv_to_rgb(float(position) * 3.75, 1.0, 1.0)
 
 
 def frame_for_levels(levels, rms, beat, tick):
@@ -51,13 +63,10 @@ def frame_for_levels(levels, rms, beat, tick):
         except (IndexError, TypeError, ValueError):
             level = 0.0
         level = max(0.0, min(1.0, level))
-        boost = 1.25 if beat else 1.0
-        brightness = max(0.0, min(1.0, (0.08 + level * 0.92) * boost))
-        hue = (tick * 2 + i * (96 // max(1, count))) % 96
-        red, green, blue = _wheel(hue)
-        red = int(red * brightness)
-        green = int(green * brightness)
-        blue = int(blue * brightness)
+        boost = 1.35 if beat else 1.0
+        brightness = max(0.0, min(1.0, (0.10 + level * 0.90) * boost))
+        hue = (tick * 8.0 + i * (360.0 / max(1, count))) % 360.0
+        red, green, blue = _hsv_to_rgb(hue, 1.0, 0.12 + 0.88 * brightness)
         parts.append("%02X%02X%02X" % (red, green, blue))
     if beat:
         parts = [("FFFFFF" if (i + tick) % count == 0 else part) for i, part in enumerate(parts)]

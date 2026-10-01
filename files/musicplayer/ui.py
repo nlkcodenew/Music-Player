@@ -859,40 +859,69 @@ class MusicPlayerApp:
             self.text(detail, self.width - 32 - detail_width, y + 5, "small", folder_color)
             y += 52
 
+    def _fit_title(self, title, max_width):
+        for font in ("title", "body", "small"):
+            try:
+                if self.measure(title, font)[0] <= max_width:
+                    return (title, font)
+            except Exception:
+                continue
+        try:
+            return (self.ellipsize(title, max_width, "body"), "body")
+        except Exception:
+            return (title[:32], "body")
+
     def _render_playing(self):
         track = self.player.current
         if not track:
             self.text("Nothing is playing", self.width // 2, self.height // 2 - 25, "hero", center=True)
             return
-        center_y = self.height // 2
-        self.text(self.ellipsize(track.title, self.width - 100, "hero"), self.width // 2, center_y - 115, "hero", center=True)
-        self.text(track.folder, self.width // 2, center_y - 55, "body", self.MUTED, center=True)
+        center_x = self.width // 2
+        offset = max(0, (self.height - 480) // 2 - 20)
+        max_w = max(200, self.width - 80)
+        title_text, title_font = self._fit_title(track.title, max_w)
+        title_y = 84 + offset
+        self.text(title_text, center_x, title_y, title_font, center=True)
+        folder_y = title_y + 44
+        try:
+            folder_text = self.ellipsize(track.folder or "", max_w, "body")
+        except Exception:
+            folder_text = track.folder or ""
+        self.text(folder_text, center_x, folder_y, "body", self.MUTED, center=True)
         modes = []
         repeat = self.settings.get("repeat")
         if repeat != "off":
             modes.append("REPEAT %s" % repeat.upper())
         if self.settings.get("shuffle"):
             modes.append("SHUFFLE ON")
+        modes_y = folder_y + 30
         if modes:
-            self.text(" | ".join(modes), self.width // 2, center_y - 18, "small", self.ACCENT, center=True)
+            self.text(" | ".join(modes), center_x, modes_y, "small", self.ACCENT, center=True)
+            prog_y = modes_y + 30
+        else:
+            prog_y = folder_y + 34
         position = self.player.position()
         duration = self.player.duration()
         progress_width = self.width - 160
-        self.fill(80, center_y + 25, progress_width, 10, self.PANEL)
+        self.fill(80, prog_y, progress_width, 10, self.PANEL)
         ratio = min(1.0, position / duration) if duration > 0 else 0.0
-        self.fill(80, center_y + 25, progress_width * ratio, 10, self.ACCENT)
+        self.fill(80, prog_y, progress_width * ratio, 10, self.ACCENT)
         elapsed = self._format_time(position)
         total = self._format_time(duration) if duration else "--:--"
-        self.text("%s / %s" % (elapsed, total), self.width // 2, center_y + 55, "body", center=True)
-        self._render_spectrum(center_y + 92)
+        time_y = prog_y + 20
+        self.text("%s / %s" % (elapsed, total), center_x, time_y, "body", center=True)
+        spec_base = time_y + 104
+        self._render_spectrum(spec_base, 84)
         state = "PAUSED" if self.runtime.Mix_PausedMusic() else "PLAYING"
-        self.text(state, self.width // 2, center_y + 150, "small", self.ACCENT, center=True)
+        state_y = spec_base + 18
+        self.text(state, center_x, state_y, "small", self.ACCENT, center=True)
         button = "A  RESUME" if self.runtime.Mix_PausedMusic() else "A  PAUSE"
         button_width = 210
-        self.fill(self.width // 2 - button_width // 2, center_y + 185, button_width, 48, self.ACCENT)
-        self.text(button, self.width // 2, center_y + 194, "body", self.BG, center=True)
+        button_y = state_y + 26
+        self.fill(center_x - button_width // 2, button_y, button_width, 44, self.ACCENT)
+        self.text(button, center_x, button_y + 9, "body", self.BG, center=True)
 
-    def _render_spectrum(self, baseline_y):
+    def _render_spectrum(self, baseline_y, max_h=84):
         try:
             enabled = bool(self.settings.get("spectrum"))
         except Exception:
@@ -905,20 +934,31 @@ class MusicPlayerApp:
         count = len(levels)
         area_x = 80
         area_w = max(120, self.width - 160)
-        gap = 6 if count <= 14 else 4
-        bar_w = max(4, (area_w - gap * (count - 1)) // count)
+        gap = 8 if count <= 14 else 5
+        bar_w = max(10, (area_w - gap * (count - 1)) // count)
         total_w = bar_w * count + gap * (count - 1)
         start_x = area_x + (area_w - total_w) // 2
-        max_h = 44
-        color = self.TEXT if beat else self.ACCENT
+        low_color = self.ACCENT
+        mid_color = (255, 200, 0, 255)
+        top_color = self.TEXT if beat else (255, 90, 60, 255)
         for index, raw in enumerate(levels):
             try:
                 level = max(0.0, min(1.0, float(raw)))
             except (TypeError, ValueError):
                 level = 0.0
-            height = int(level * max_h) + (2 if level > 0.02 else 0)
+            height = int(level * max_h) + (3 if level > 0.02 else 0)
+            if height <= 0:
+                continue
+            low_h = int(height * 0.55)
+            mid_h = int(height * 0.25)
+            top_h = height - low_h - mid_h
             x = start_x + index * (bar_w + gap)
-            self.fill(x, baseline_y - height, bar_w, height, color)
+            if low_h > 0:
+                self.fill(x, baseline_y - low_h, bar_w, low_h, low_color)
+            if mid_h > 0:
+                self.fill(x, baseline_y - low_h - mid_h, bar_w, mid_h, mid_color)
+            if top_h > 0:
+                self.fill(x, baseline_y - height, bar_w, top_h, top_color)
 
     def _render_lyrics(self):
         track = self.player.current

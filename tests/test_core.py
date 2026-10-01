@@ -902,5 +902,34 @@ class VisualSettingsTests(unittest.TestCase):
         app.leds.update.assert_called_once()
 
 
+    def test_led_frames_are_vivid_and_rotate(self):
+        from musicplayer.leds import frame_for_levels
+        first = frame_for_levels([0.7] * 6, 0.2, False, 0)
+        leds_first = [first[i:i + 6] for i in range(0, len(first), 6)]
+        self.assertGreater(len(set(leds_first)), 2)
+        second = frame_for_levels([0.7] * 6, 0.2, False, 10)
+        self.assertNotEqual(first, second)
+
+    def test_long_titles_shrink_instead_of_overflowing(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.fonts = {}
+        widths = {"title": 600, "body": 320, "small": 200}
+
+        def fake_measure(text, font="body"):
+            return (widths.get(font, 300), 27)
+
+        def fake_ellipsize(text, max_width, font="body"):
+            return text[:10] + "..."
+
+        app.measure = fake_measure
+        app.ellipsize = fake_ellipsize
+        text, font = app._fit_title("Short", 700)
+        self.assertEqual((text, font), ("Short", "title"))
+        text, font = app._fit_title("A very long song title that cannot fit", 500)
+        self.assertEqual(font, "body")
+        text, font = app._fit_title("A very long song title that cannot fit", 100)
+        self.assertTrue(text.endswith("..."))
+
+
 if __name__ == "__main__":
     unittest.main()
