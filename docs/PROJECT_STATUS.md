@@ -1,19 +1,20 @@
-# Music Player — project status v1.3.2
+# Music Player — project status v1.6.2 (Buoc A done, xem `docs/STEP_A_DONE.md`)
 
-> Updated 2026-09-26. Read `docs/NEW_SESSION_HANDOFF.md` before continuing.
+> Updated 2026-10-02. Buoc A (visuals + LED + UI kieu Truepod) da close.
+> Tiep theo: Buoc B Google Drive. `docs/NEW_SESSION_HANDOFF.md` van mo ta v1.3.2.
 
 ## Current release
 
 | Item | Value |
 |---|---|
-| Latest release | `v1.3.2` |
-| Feature commit/tag | `v1.3.2` release commit / `v1.3.2` |
-| OTA files | 31 |
-| Stock ZIP entries | 31 |
-| Spruce ZIP entries | 31 |
-| Unit tests | 49/49 passed |
-| Stock ZIP SHA-256 | `0675ce83c712053be73b0435b2a9b468ed8a1688826e5a7d97c384086dcb3686` |
-| Spruce ZIP SHA-256 | `d08275bc9a5209deac5c67ba36e3e9ff67b25798c7d4eddb46c8f37e031802a3` |
+| Latest release | `v1.6.2` |
+| Feature commit/tag | `d327b2d` / `v1.6.2` |
+| OTA files | 34 |
+| Stock ZIP entries | 34 |
+| Spruce ZIP entries | 34 |
+| Unit tests | 76/76 passed |
+| Stock ZIP SHA-256 | `e6a0a8c1c824828a412ac4dd754fa9e676b0b70059e155de3855491d3dc2d222` |
+| Spruce ZIP SHA-256 | `50ada629b5c3648acb3af85a2e3a86097886edf4dde9320c1799b360b5a7c63b` |
 
 The public release contains `ota-manifest.json`, two platform ZIPs and two
 SHA-256 sidecars. The local release gate validates version, hashes, entry counts,
