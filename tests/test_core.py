@@ -809,11 +809,28 @@ class VisualsTapTests(unittest.TestCase):
 class LedControllerTests(unittest.TestCase):
     def test_frame_for_levels_returns_rgb_hex(self):
         from musicplayer.leds import frame_for_levels
-        frame = frame_for_levels([0.0, 0.5, 1.0], 0.1, False, 3)
-        self.assertEqual(len(frame), 18)
-        self.assertRegex(frame, r"^[0-9A-F]+$")
+        frame = frame_for_levels([0.0, 0.5, 1.0], 0.1, False, 3, slots=3)
+        self.assertEqual(len(frame), 21)
+        self.assertRegex(frame, r"^[0-9A-F ]+$")
+        self.assertTrue(frame.endswith(" "))
         beat_frame = frame_for_levels([0.5] * 4, 0.2, True, 1)
         self.assertIn("FFFFFF", beat_frame)
+
+    def test_full_frame_covers_all_driver_slots(self):
+        from musicplayer.leds import FRAME_SLOTS, frame_for_levels
+        frame = frame_for_levels([0.5] * 14, 0.2, False, 3)
+        parts = frame.split()
+        self.assertEqual(len(parts), FRAME_SLOTS)
+        self.assertTrue(frame.endswith(" "))
+        self.assertEqual(FRAME_SLOTS, 23)
+
+    def test_single_led_frame_lights_one_position(self):
+        from musicplayer.leds import FRAME_SLOTS, frame_single
+        frame = frame_single(5)
+        parts = frame.split()
+        self.assertEqual(len(parts), FRAME_SLOTS)
+        self.assertEqual(parts[5], "FFFFFF")
+        self.assertEqual(parts.count("000000"), FRAME_SLOTS - 1)
 
     def test_controller_without_nodes_is_unavailable_but_safe(self):
         from musicplayer.leds import LedController
@@ -842,7 +859,7 @@ class LedControllerTests(unittest.TestCase):
                 self.assertEqual(handle.read(), "0")
             self.assertTrue(leds.update([0.6] * 6, 0.2, False, force=True))
             with open(frame) as handle:
-                self.assertEqual(len(handle.read()), 36)
+                self.assertEqual(len(handle.read()), leds.slots * 7)
             self.assertTrue(leds.restore_engine())
             self.assertTrue(leds.clear())
 
@@ -1182,6 +1199,63 @@ class OtaRecheckTests(unittest.TestCase):
             with mock.patch.object(ui_module.time, "monotonic", return_value=1000.0):
                 app._maybe_check_update()
         self.assertEqual(app.next_update_check, 1300.0)
+
+
+    def test_controller_suspend_enables_frame_node(self):
+        import tempfile
+        from musicplayer.leds import LedController
+        with tempfile.TemporaryDirectory() as root:
+            frame = os.path.join(root, "frame_hex")
+            effect = os.path.join(root, "effect_enable")
+            enable = os.path.join(root, "enable")
+            for path in (frame, effect, enable):
+                with open(path, "w") as handle:
+                    handle.write("")
+            leds = LedController(frame_path=frame, effect_path=effect, enable_path=enable)
+            self.assertTrue(leds.suspend_engine())
+            with open(enable) as handle:
+                self.assertEqual(handle.read(), "1")
+
+    def test_led_test_mode_writes_single_position(self):
+        import tempfile
+        from musicplayer.leds import LedController
+        with tempfile.TemporaryDirectory() as root:
+            frame = os.path.join(root, "frame_hex")
+            with open(frame, "w") as handle:
+                handle.write("")
+            leds = LedController(frame_path=frame, effect_path="", enable_path="")
+            leds.frame_path = frame
+            leds.enabled = True
+            leds.test_index = 4
+            self.assertTrue(leds.update([0.5] * 14, 0.1, False, force=True))
+            with open(frame) as handle:
+                parts = handle.read().split()
+            self.assertEqual(parts[4], "FFFFFF")
+            self.assertEqual(parts.count("000000"), leds.slots - 1)
+
+    def test_led_test_toggle_and_step(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.leds = mock.Mock(available=True, test_index=-1, slots=23)
+        app.status = ""
+        app.status_error = False
+        self.assertEqual(app._toggle_led_test(), 0)
+        app.leds.test_index = 0
+        self.assertEqual(app._step_led_test(1), 1)
+        self.assertIn("2/23", app.status)
+
+    def test_quick_menu_lists_led_test(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"auto_report_errors": False, "audio_output": "auto",
+                  "led_mode": "spectrum", "spectrum": True}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.leds = mock.Mock(test_index=-1)
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        ids = [entry[0] for entry in app._quick_menu_entries()]
+        self.assertIn("led_test", ids)
 
 
 if __name__ == "__main__":

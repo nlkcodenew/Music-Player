@@ -536,6 +536,7 @@ class MusicPlayerApp:
                 "Audio Output: %s" % output_mode_label(self.settings.get("audio_output")),
             ),
             ("led_mode", "LED Mode: %s" % str(self.settings.get("led_mode")).title()),
+            ("led_test", "LED Test: %s" % self._led_test_label()),
             ("spectrum", "Spectrum: %s" % ("On" if self.settings.get("spectrum") else "Off")),
             ("audio_info", "Audio Info"),
             ("check_update", "Check for Update"),
@@ -587,6 +588,12 @@ class MusicPlayerApp:
         if selected == "led_mode" and action in ("left", "right"):
             self._cycle_led_mode(-1 if action == "left" else 1)
             return
+        if selected == "led_test" and action in ("left", "right"):
+            if getattr(getattr(self, "leds", None), "test_index", -1) < 0:
+                self._toggle_led_test()
+            else:
+                self._step_led_test(-1 if action == "left" else 1)
+            return
         if action != "a":
             return
         if selected == "lyrics":
@@ -604,6 +611,8 @@ class MusicPlayerApp:
             self._cycle_audio_output(1)
         elif selected == "led_mode":
             self._cycle_led_mode(1)
+        elif selected == "led_test":
+            self._toggle_led_test()
         elif selected == "spectrum":
             self._toggle_spectrum()
         elif selected == "audio_info":
@@ -735,6 +744,48 @@ class MusicPlayerApp:
             leds.update(levels, rms, beat)
         except Exception:
             pass
+
+    def _led_test_label(self):
+        leds = getattr(self, "leds", None)
+        index = getattr(leds, "test_index", -1) if leds is not None else -1
+        if index is None or index < 0:
+            return "Off"
+        try:
+            slots = int(getattr(leds, "slots", 23) or 23)
+        except (TypeError, ValueError):
+            slots = 23
+        return "%d/%d" % (index % slots + 1, slots)
+
+    def _toggle_led_test(self):
+        leds = getattr(self, "leds", None)
+        if leds is None or not getattr(leds, "available", False):
+            self.status = "LED hardware not found on this device"
+            self.status_error = True
+            return -1
+        if getattr(leds, "test_index", -1) >= 0:
+            leds.test_index = -1
+            self.status = "LED Test off"
+        else:
+            leds.test_index = 0
+            self.status = "LED Test: watch which LED is white, LEFT/RIGHT steps"
+        self.status_error = False
+        get_logger().info("LED test index=%s", getattr(leds, "test_index", -1))
+        return leds.test_index
+
+    def _step_led_test(self, step):
+        leds = getattr(self, "leds", None)
+        if leds is None or getattr(leds, "test_index", -1) < 0:
+            return -1
+        try:
+            slots = int(getattr(leds, "slots", 23) or 23)
+        except (TypeError, ValueError):
+            slots = 23
+        leds.test_index = (leds.test_index + step) % slots
+        self.status = "LED Test: pos %d/%d - which LED is white?" % (
+            leds.test_index + 1, slots,
+        )
+        self.status_error = False
+        return leds.test_index
 
     def _cycle_led_mode(self, step=1):
         modes = ("off", "beat", "spectrum")

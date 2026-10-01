@@ -8,6 +8,13 @@ EFFECT_PATHS = (
     "/sys/class/led_anim/effect_enable",
     "/sys/class/led_anim/enable",
 )
+ENABLE_PATHS = (
+    "/sys/class/led_anim/enable",
+)
+# Driver help advertises 23 XRGB slots. Extra values are ignored when the
+# hardware exposes fewer, but missing values leave tail LEDs dark, so always
+# write the full frame.
+FRAME_SLOTS = 23
 WRITE_INTERVAL = 0.06
 IDLE_TIMEOUT = 1.5
 
@@ -53,15 +60,21 @@ def _wheel(position):
     return _hsv_to_rgb(float(position) * 3.75, 1.0, 1.0)
 
 
-def frame_for_levels(levels, rms, beat, tick):
-    count = max(1, len(levels)) if levels else 1
+def _format_frame(parts):
+    return " ".join(parts) + " " if parts else ""
+
+
+def frame_for_levels(levels, rms, beat, tick, slots=FRAME_SLOTS):
+    count = max(1, int(slots or FRAME_SLOTS))
+    bands = list(levels) if levels else []
     parts = []
     for i in range(count):
         level = 0.0
-        try:
-            level = float(levels[i])
-        except (IndexError, TypeError, ValueError):
-            level = 0.0
+        if bands:
+            try:
+                level = float(bands[i * len(bands) // count])
+            except (IndexError, TypeError, ValueError):
+                level = 0.0
         level = max(0.0, min(1.0, level))
         boost = 1.35 if beat else 1.0
         brightness = max(0.0, min(1.0, (0.10 + level * 0.90) * boost))
@@ -73,25 +86,47 @@ def frame_for_levels(levels, rms, beat, tick):
     if not parts:
         dim = int(max(0.0, min(1.0, rms)) * 40)
         parts = ["%02X%02X%02X" % (dim, dim, dim)]
-    return "".join(parts)
+    return _format_frame(parts)
+
+
+def frame_single(index, slots=FRAME_SLOTS, color="FFFFFF"):
+    count = max(1, int(slots or FRAME_SLOTS))
+    parts = ["000000"] * count
+    if 0 <= int(index) < count:
+        parts[int(index)] = color
+    return _format_frame(parts)
+
+
+def frame_all(color, slots=FRAME_SLOTS):
+    count = max(1, int(slots or FRAME_SLOTS))
+    return _format_frame([color] * count)
 
 
 class LedController:
-    def __init__(self, frame_path="", effect_path=""):
+    def __init__(self, frame_path="", effect_path="", enable_path="", slots=FRAME_SLOTS):
         self.frame_path = frame_path or _first_existing(FRAME_PATHS)
         self.effect_path = effect_path or _first_existing(EFFECT_PATHS)
+        self.enable_path = enable_path or _first_existing(ENABLE_PATHS)
+        self.slots = max(1, int(slots or FRAME_SLOTS))
         self._last_write = 0.0
         self._tick = 0
         self._last_levels = ()
         self.enabled = bool(self.frame_path)
         self.suspended = False
         self.errors = 0
+        self.test_index = -1
 
     @property
     def available(self):
         return self.enabled
 
     def suspend_engine(self):
+        if self.enable_path:
+            try:
+                with open(self.enable_path, "w", encoding="ascii") as handle:
+                    handle.write("1")
+            except OSError:
+                pass
         if not self.effect_path:
             return False
         try:
@@ -124,7 +159,10 @@ class LedController:
             if (rms or 0.0) < 0.01:
                 return False
         self._tick += 1
-        frame = frame_for_levels(levels, rms, beat, self._tick)
+        if self.test_index >= 0:
+            frame = frame_single(self.test_index % self.slots, self.slots)
+        else:
+            frame = frame_for_levels(levels, rms, beat, self._tick, self.slots)
         try:
             with open(self.frame_path, "w", encoding="ascii") as handle:
                 handle.write(frame)
@@ -141,10 +179,10 @@ class LedController:
         if not self.frame_path:
             return False
         try:
-            count = max(1, len(self._last_levels))
             with open(self.frame_path, "w", encoding="ascii") as handle:
-                handle.write("000000" * count)
+                handle.write(frame_all("000000", self.slots))
             self._last_levels = ()
+            self.test_index = -1
             return True
         except OSError:
             return False
