@@ -1,7 +1,10 @@
+import time
+
 from .sdl_runtime import (
     SDL_CONTROLLERAXISMOTION,
     SDL_CONTROLLERBUTTONDOWN,
     SDL_CONTROLLERBUTTONUP,
+    SDL_JOYAXISMOTION,
     SDL_JOYBUTTONDOWN,
     SDL_JOYBUTTONUP,
     SDL_JOYHATMOTION,
@@ -19,8 +22,8 @@ CONTROLLER_BUTTONS = {
     6: "start",
     9: "l1",
     10: "r1",
-    11: "up",
-    12: "down",
+    11: "prev",
+    12: "next",
     13: "left",
     14: "right",
 }
@@ -49,15 +52,22 @@ KEYBOARD_SCANCODES = {
     78: "r1",
     80: "left",
     79: "right",
-    82: "up",
-    81: "down",
+    82: "stick_up",
+    81: "stick_down",
 }
+
+STICK_DEADZONE = 8000
+STICK_INITIAL_DELAY = 0.35
+STICK_REPEAT_INTERVAL = 0.20
 
 
 class InputState:
-    def __init__(self):
+    def __init__(self, clock=None):
+        self.clock = clock or time.monotonic
         self.held = set()
         self.edges = []
+        self.stick_held = None
+        self.stick_repeat_at = 0.0
 
     def _set(self, action, down):
         if not action:
@@ -67,6 +77,29 @@ class InputState:
             self.held.add(action)
         elif not down:
             self.held.discard(action)
+
+    def _stick(self, direction):
+        if direction == self.stick_held:
+            return
+        if self.stick_held:
+            self.held.discard(self.stick_held)
+        self.stick_held = direction
+        if direction:
+            self.edges.append(direction)
+            self.held.add(direction)
+            try:
+                now = self.clock()
+            except Exception:
+                now = 0.0
+            self.stick_repeat_at = now + STICK_INITIAL_DELAY
+
+    @staticmethod
+    def _stick_direction(value):
+        if value < -STICK_DEADZONE:
+            return "stick_up"
+        if value > STICK_DEADZONE:
+            return "stick_down"
+        return None
 
     def feed(self, event):
         event_type = event.type
@@ -81,17 +114,28 @@ class InputState:
                 self._set("l2", event.caxis.value > 8000)
             elif event.caxis.axis == 5:
                 self._set("r2", event.caxis.value > 8000)
+            elif event.caxis.axis == 1:
+                self._stick(self._stick_direction(event.caxis.value))
         elif event_type in (SDL_JOYBUTTONDOWN, SDL_JOYBUTTONUP):
             self._set(JOYSTICK_BUTTONS.get(event.jbutton.button), event_type == SDL_JOYBUTTONDOWN)
+        elif event_type == SDL_JOYAXISMOTION:
+            if event.jaxis.axis == 1:
+                self._stick(self._stick_direction(event.jaxis.value))
         elif event_type == SDL_JOYHATMOTION:
             value = event.jhat.value
-            self._set("up", bool(value & 0x01))
+            self._set("prev", bool(value & 0x01))
             self._set("right", bool(value & 0x02))
-            self._set("down", bool(value & 0x04))
+            self._set("next", bool(value & 0x04))
             self._set("left", bool(value & 0x08))
 
     def poll(self):
+        try:
+            now = self.clock()
+        except Exception:
+            now = 0.0
+        if self.stick_held and now >= self.stick_repeat_at:
+            self.edges.append(self.stick_held)
+            self.stick_repeat_at = now + STICK_REPEAT_INTERVAL
         edges = self.edges
         self.edges = []
         return edges
-

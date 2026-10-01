@@ -33,6 +33,7 @@ CACHE_FILENAME = "drive-cache.json"
 STREAM_SUBDIR = "drive-cache"
 OFFLINE_SUBDIR = "Drive"
 MAX_TRACK_BYTES = 700 * 1024 * 1024
+MAX_STREAM_CACHE_BYTES = 1024 * 1024 * 1024
 CHUNK_SIZE = 64 * 1024
 FOLDER_MIME = "application/vnd.google-apps.folder"
 EMBED_VIEW_URL = "https://drive.google.com/embeddedfolderview?id=%s#list"
@@ -368,6 +369,69 @@ def stream_path(data_dir, file_id, extension):
     return os.path.join(directory, "%s%s" % (safe_id, extension or ".bin"))
 
 
+def format_bytes(value):
+    try:
+        total = float(value)
+    except (TypeError, ValueError):
+        return "0MB"
+    if total < 0:
+        total = 0.0
+    if total >= 1024 * 1024 * 1024:
+        return "%.1fGB" % (total / (1024 * 1024 * 1024))
+    return "%dMB" % int(total / (1024 * 1024))
+
+
+def stream_cache_size(data_dir):
+    """Total bytes of downloaded-for-playback tracks (offline saves excluded)."""
+    try:
+        names = os.listdir(os.path.join(data_dir, STREAM_SUBDIR))
+    except OSError:
+        return 0
+    total = 0
+    for name in names:
+        try:
+            total += os.path.getsize(os.path.join(data_dir, STREAM_SUBDIR, name))
+        except OSError:
+            pass
+    return total
+
+
+def enforce_stream_cache_limit(data_dir, protect=()):
+    """Evict least-recently-played cached tracks until under the 1GB cap.
+
+    Only touches the playback stream cache -- offline saves under
+    ``Music/Drive/`` are the user's files and are never deleted.
+    Returns the remaining cache size in bytes.
+    """
+    directory = os.path.join(data_dir, STREAM_SUBDIR)
+    protected = {os.path.basename(name) for name in (protect or ()) if name}
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return 0
+    items = []
+    for name in names:
+        path = os.path.join(directory, name)
+        try:
+            items.append([os.path.getmtime(path), os.path.getsize(path), path])
+        except OSError:
+            pass
+    total = sum(size for _, size, _ in items)
+    items.sort(key=lambda item: item[0])
+    for _, size, path in items:
+        if total <= MAX_STREAM_CACHE_BYTES:
+            break
+        if os.path.basename(path) in protected:
+            continue
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        else:
+            total -= size
+    return total
+
+
 def _download_to_path(app_dir, url, destination, expected_size=0):
     if urllib.parse.urlparse(url).scheme != "https":
         raise DriveError("Drive only accepts HTTPS URLs")
@@ -424,6 +488,10 @@ def ensure_stream_file(app_dir, data_dir, entry, api_key=""):
     destination = stream_path(data_dir, entry.file_id, entry.extension)
     if os.path.isfile(destination) and os.path.getsize(destination) > 0:
         if not entry.size or os.path.getsize(destination) == entry.size:
+            try:
+                os.utime(destination, None)
+            except OSError:
+                pass
             return destination
     if api_key:
         urls = [media_url(entry.file_id, api_key), public_download_url(entry.file_id)]
@@ -432,7 +500,9 @@ def ensure_stream_file(app_dir, data_dir, entry, api_key=""):
     errors = []
     for url in urls:
         try:
-            return _download_to_path(app_dir, url, destination, entry.size)
+            _download_to_path(app_dir, url, destination, entry.size)
+            enforce_stream_cache_limit(data_dir, protect=(destination,))
+            return destination
         except DriveError as error:
             errors.append(str(error))
     raise DriveError("; ".join(errors) or "Drive download failed")

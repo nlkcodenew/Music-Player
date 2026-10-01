@@ -10,15 +10,18 @@ from .collections import Collections
 from .display import DisplayController
 from .drive import (
     DEFAULT_FOLDER_ID,
+    DriveEntry,
     DriveError,
     clear_cache as drive_clear_cache,
     download_offline as drive_download_offline,
     ensure_stream_file as drive_ensure_stream_file,
     extract_folder_id as drive_extract_folder_id,
+    format_bytes as drive_format_bytes,
     get_cached_folder as drive_get_cached,
     list_folder as drive_list_folder,
     list_folder_public as drive_list_public,
     put_cached_folder as drive_put_cache,
+    stream_cache_size as drive_cache_size,
 )
 from .input import InputState
 from .identity import installation_id
@@ -114,6 +117,8 @@ class MusicPlayerApp:
         self.drive_page_token = ""
         self.drive_busy = False
         self.drive_loaded = False
+        self._prefetch_base = None
+        self._prefetch_target = -1
 
     def initialize(self):
         self.display.restore()
@@ -411,6 +416,7 @@ class MusicPlayerApp:
                 self._update_sleep_timer()
                 self.player.update()
                 self._update_visuals()
+                self._maybe_prefetch_drive()
                 self._maybe_check_update()
                 if self.player.error:
                     self.status = self.player.error
@@ -472,13 +478,12 @@ class MusicPlayerApp:
             else:
                 self.exit_confirmation = True
             return
-        if action == "l1":
-            self.player.advance(False)
-            if self.screen == "library":
-                self.screen = "playing"
-            return
-        if action == "r1":
-            self.player.advance(True)
+        if action in ("l1", "r1", "prev", "next"):
+            forward = action in ("r1", "next")
+            if self.screen == "library" and action in ("l1", "r1"):
+                self._page_selection(1 if forward else -1)
+                return
+            self.player.advance(forward)
             if self.screen == "library":
                 self.screen = "playing"
             return
@@ -518,9 +523,9 @@ class MusicPlayerApp:
             return
         if self.screen == "library":
             if self.library_mode == "source":
-                if action == "up":
+                if action in ("up", "stick_up"):
                     self.selection = max(0, self.selection - 1)
-                elif action == "down":
+                elif action in ("down", "stick_down"):
                     self.selection = min(1, self.selection + 1)
                 elif action == "left":
                     self.selection = 0
@@ -541,9 +546,9 @@ class MusicPlayerApp:
                     if action in ("up", "down", "left", "right", "a"):
                         self._drive_refresh()
                     return
-                if action == "up":
+                if action in ("up", "stick_up"):
                     self.selection = max(0, self.selection - 1)
-                elif action == "down":
+                elif action in ("down", "stick_down"):
                     self.selection = min(len(rows) - 1, self.selection + 1)
                 elif action == "left":
                     self.selection = max(0, self.selection - self.visible_rows())
@@ -554,9 +559,9 @@ class MusicPlayerApp:
                     self._drive_play_row(rows[self.selection])
                 return
             entries = self._library_entries()
-            if action == "up" and entries:
+            if action in ("up", "stick_up") and entries:
                 self.selection = max(0, self.selection - 1)
-            elif action == "down" and entries:
+            elif action in ("down", "stick_down") and entries:
                 self.selection = min(len(entries) - 1, self.selection + 1)
             elif action == "left" and entries:
                 self.selection = max(0, self.selection - self.visible_rows())
@@ -622,7 +627,7 @@ class MusicPlayerApp:
             ("intro", "Intro: %s" % ("On" if self.settings.get("intro") else "Off")),
             ("drive_refresh", "Drive Refresh"),
             ("drive_download", "Drive Download (offline)"),
-            ("drive_clear", "Drive Clear Cache"),
+            ("drive_clear", "Drive Cache: %s - Clear" % self._drive_cache_label()),
             ("audio_info", "Audio Info"),
             ("check_update", "Check for Update"),
             ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
@@ -641,6 +646,10 @@ class MusicPlayerApp:
         return entries
 
     def _handle_quick_menu(self, action):
+        if action in ("stick_up", "prev"):
+            action = "up"
+        elif action in ("stick_down", "next"):
+            action = "down"
         entries = self._quick_menu_entries()
         if action == "select":
             self.quick_menu = False
@@ -723,6 +732,7 @@ class MusicPlayerApp:
                 self.status_error = True
         elif selected == "drive_clear":
             try:
+                before = drive_cache_size(self.paths.data_dir)
                 drive_clear_cache(self.paths.data_dir)
             except Exception as error:
                 self.status = "Drive clear: %s" % error
@@ -731,7 +741,7 @@ class MusicPlayerApp:
                 self.drive_entries = []
                 self.drive_page_token = ""
                 self.drive_loaded = False
-                self.status = "Drive cache cleared"
+                self.status = "Drive cache cleared (%s freed)" % drive_format_bytes(before)
                 self.status_error = False
         elif selected == "audio_info":
             self.status = self._audio_info_line()
@@ -1133,6 +1143,84 @@ class MusicPlayerApp:
             rows = rows + ["__more__"]
         return rows
 
+    def _drive_cache_label(self):
+        try:
+            from .drive import MAX_STREAM_CACHE_BYTES
+            return "%s/%s" % (
+                drive_format_bytes(drive_cache_size(self.paths.data_dir)),
+                drive_format_bytes(MAX_STREAM_CACHE_BYTES),
+            )
+        except Exception:
+            return "Clear"
+
+    def _maybe_prefetch_drive(self):
+        """Download the upcoming Drive track in the background while playing."""
+        try:
+            player = self.player
+            if player is None or not getattr(player, "audio_ready", False):
+                return
+            current = player.current
+            if current is None or not getattr(current, "path", "").startswith("drive://"):
+                return
+            tracks = player.tracks
+            if not tracks or len(tracks) < 2:
+                return
+            base = (len(tracks), player.index, current.path)
+            if base != getattr(self, "_prefetch_base", None):
+                self._prefetch_base = base
+                try:
+                    shuffled = bool(self.settings.get("shuffle"))
+                except Exception:
+                    shuffled = False
+                try:
+                    self._prefetch_target = (
+                        -1 if shuffled else player.next_index(True, automatic=True)
+                    )
+                except Exception:
+                    self._prefetch_target = -1
+            target = getattr(self, "_prefetch_target", -1)
+            if target is None or target < 0 or target == player.index:
+                return
+            try:
+                app_dir = self.paths.app_dir
+                data_dir = self.paths.data_dir
+            except Exception:
+                return
+            threading.Thread(
+                target=self._prefetch_drive_track,
+                args=(tracks[target], self._drive_api_key(), app_dir, data_dir),
+                name="drive-prefetch", daemon=True,
+            ).start()
+            self._prefetch_target = -1
+        except Exception as error:
+            get_logger().warning("drive prefetch skipped: %s", error)
+
+    @staticmethod
+    def _prefetch_drive_track(track, api_key, app_dir, data_dir):
+        try:
+            path = getattr(track, "path", "")
+            if not path.startswith("drive://"):
+                return
+            remainder = path[len("drive://"):]
+            file_id = remainder.split("/", 1)[0]
+            filename = remainder.split("/", 1)[1] if "/" in remainder else "track"
+            if not file_id:
+                return
+            import os as _os
+            entry = DriveEntry(
+                file_id=file_id,
+                name=filename,
+                mime_type="",
+                size=0,
+                is_folder=False,
+                title=filename.rsplit(".", 1)[0],
+                extension=_os.path.splitext(filename)[1].lower(),
+            )
+            drive_ensure_stream_file(app_dir, data_dir, entry, api_key or "")
+            get_logger().info("drive prefetched %r", filename)
+        except Exception as error:
+            get_logger().info("drive prefetch missed: %s", error)
+
     def _drive_resolve_track(self, track):
         """Resolve a drive:// track to a local cached file for SDL_mixer."""
         path = getattr(track, "path", "")
@@ -1284,6 +1372,17 @@ class MusicPlayerApp:
 
     def visible_rows(self):
         return max(3, (self.height - 190) // 52)
+
+    def _page_selection(self, step):
+        if getattr(self, "library_mode", "") == "drive":
+            count = len(self._drive_rows())
+        elif getattr(self, "library_mode", "") == "source":
+            count = 2
+        else:
+            count = len(self._library_entries())
+        if count:
+            self.selection = max(0, min(count - 1, self.selection + step * self.visible_rows()))
+        get_logger().info("library page step=%d selection=%d", step, self.selection)
 
     def fill(self, x, y, width, height, color):
         self.runtime.SDL_SetRenderDrawColor(self.renderer, *color)

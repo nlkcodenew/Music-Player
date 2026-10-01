@@ -28,6 +28,7 @@ from musicplayer.settings import Settings
 from musicplayer.sleep_timer import SleepTimer
 from musicplayer.updater import apply_update, update_available, validate_manifest, version_tuple
 from musicplayer.ui import MusicPlayerApp
+from musicplayer.input import InputState
 from musicplayer import drive as drive_module
 from musicplayer.drive import (
     DEFAULT_FOLDER_ID,
@@ -1658,6 +1659,238 @@ class DriveTests(unittest.TestCase):
             app._cycle_library_mode()
         self.assertEqual(app.library_mode, "all")
         refresh.assert_not_called()
+
+
+    def test_local_view_cycle_stays_local(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.library_mode = "favorite_playlists"
+        app.playlist_parent_mode = "playlists"
+        app.active_playlist = ""
+        app.selection = 0
+        app.scroll = 0
+        app.drive_loaded = False
+        with mock.patch.object(app, "_drive_refresh") as refresh:
+            app._cycle_library_mode()
+        self.assertEqual(app.library_mode, "all")
+        refresh.assert_not_called()
+
+
+class InputRemapTests(unittest.TestCase):
+    @staticmethod
+    def _controller_axis(axis, value):
+        from musicplayer.sdl_runtime import SDL_CONTROLLERAXISMOTION
+        event = mock.Mock()
+        event.type = SDL_CONTROLLERAXISMOTION
+        event.caxis.axis = axis
+        event.caxis.value = value
+        return event
+
+    def test_stick_push_steps_and_repeats_while_held(self):
+        now = [100.0]
+        state = InputState(clock=lambda: now[0])
+        state.feed(self._controller_axis(1, -20000))
+        self.assertEqual(state.poll(), ["stick_up"])
+        self.assertEqual(state.poll(), [])
+        now[0] = 100.4
+        self.assertEqual(state.poll(), ["stick_up"])
+        state.feed(self._controller_axis(1, 0))
+        now[0] = 200.0
+        self.assertEqual(state.poll(), [])
+
+    def test_stick_down_and_deadzone(self):
+        state = InputState(clock=lambda: 0.0)
+        state.feed(self._controller_axis(1, 20000))
+        self.assertEqual(state.poll(), ["stick_down"])
+        state.feed(self._controller_axis(1, 100))
+        self.assertEqual(state.poll(), [])
+
+    def test_dpad_reports_prev_next(self):
+        from musicplayer.sdl_runtime import (
+            SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLERBUTTONUP, SDL_JOYHATMOTION,
+        )
+        state = InputState(clock=lambda: 0.0)
+        up = mock.Mock()
+        up.type = SDL_CONTROLLERBUTTONDOWN
+        up.cbutton.button = 11
+        state.feed(up)
+        down = mock.Mock()
+        down.type = SDL_CONTROLLERBUTTONDOWN
+        down.cbutton.button = 12
+        state.feed(down)
+        release = mock.Mock()
+        release.type = SDL_CONTROLLERBUTTONUP
+        release.cbutton.button = 11
+        state.feed(release)
+        hat = mock.Mock()
+        hat.type = SDL_JOYHATMOTION
+        hat.jhat.value = 0x01 | 0x08
+        state.feed(hat)
+        self.assertEqual(state.poll(), ["prev", "next", "prev", "left"])
+
+    def test_keyboard_arrows_keep_list_navigation(self):
+        from musicplayer.sdl_runtime import SDL_KEYDOWN
+        state = InputState(clock=lambda: 0.0)
+        event = mock.Mock()
+        event.type = SDL_KEYDOWN
+        event.key.repeat = 0
+        event.key.keysym.scancode = 82
+        state.feed(event)
+        event.key.keysym.scancode = 81
+        state.feed(event)
+        self.assertEqual(state.poll(), ["stick_up", "stick_down"])
+
+
+class LibraryPagingTests(unittest.TestCase):
+    def _app(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.update_busy = False
+        app.update_manifest = None
+        app.quick_menu = False
+        app.exit_confirmation = False
+        app.screen = "library"
+        app.library_mode = "all"
+        app.playlist_parent_mode = "playlists"
+        app.active_playlist = ""
+        app.tracks = [mock.Mock(path="/m/%d.mp3" % index) for index in range(20)]
+        app.selection = 10
+        app.scroll = 0
+        app.height = 480
+        app.player = mock.Mock()
+        app.player.advance.return_value = True
+        return app
+
+    def test_l1_r1_flip_pages_in_library(self):
+        app = self._app()
+        app._handle("l1")
+        self.assertEqual(app.selection, 5)
+        app._handle("r1")
+        self.assertEqual(app.selection, 10)
+        app.selection = 1
+        app._handle("l1")
+        self.assertEqual(app.selection, 0)
+
+    def test_dpad_prev_next_changes_track(self):
+        app = self._app()
+        app._handle("prev")
+        app.player.advance.assert_called_once_with(False)
+        self.assertEqual(app.screen, "playing")
+
+    def test_stick_moves_selection(self):
+        app = self._app()
+        app._handle("stick_down")
+        self.assertEqual(app.selection, 11)
+        app._handle("stick_up")
+        self.assertEqual(app.selection, 10)
+
+    def test_quick_menu_prev_next_navigate(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"auto_report_errors": False, "audio_output": "auto",
+                  "led_mode": "spectrum", "spectrum": True, "intro": True,
+                  "drive_folder_id": "x", "drive_api_key": ""}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.player = mock.Mock()
+        app.player.equalizer.preset = "Flat"
+        app.leds = mock.Mock(test_index=-1)
+        app.sleep_timer = SleepTimer()
+        app.update_manifest = None
+        app.paths = mock.Mock(app_dir="/app", data_dir="/nope")
+        app.quick_menu_selection = 2
+        app.quick_menu_scroll = 0
+        app.width = 640
+        app.height = 480
+        app._handle_quick_menu("prev")
+        self.assertEqual(app.quick_menu_selection, 1)
+        app._handle_quick_menu("next")
+        self.assertEqual(app.quick_menu_selection, 2)
+        app._handle_quick_menu("stick_down")
+        self.assertEqual(app.quick_menu_selection, 3)
+
+
+class DriveCacheCapTests(unittest.TestCase):
+    def test_oldest_files_evicted_over_cap(self):
+        import time as _time
+        with tempfile.TemporaryDirectory() as root:
+            stream = os.path.join(root, "drive-cache")
+            os.makedirs(stream)
+            base = _time.time() - 1000.0
+            for index, size in enumerate((50, 50, 50)):
+                path = os.path.join(stream, "track%d.flac" % index)
+                with open(path, "wb") as handle:
+                    handle.write(b"x" * size)
+                stamp = base + index * 10.0
+                os.utime(path, (stamp, stamp))
+            with mock.patch.object(drive_module, "MAX_STREAM_CACHE_BYTES", 60):
+                remaining = drive_module.enforce_stream_cache_limit(
+                    root, protect=(os.path.join(stream, "track2.flac"),),
+                )
+            left = sorted(os.listdir(stream))
+            self.assertEqual(left, ["track2.flac"])
+            self.assertEqual(remaining, 50)
+            self.assertEqual(drive_module.stream_cache_size(root), 50)
+
+    def test_format_bytes(self):
+        self.assertEqual(drive_module.format_bytes(0), "0MB")
+        self.assertEqual(drive_module.format_bytes(50 * 1024 * 1024), "50MB")
+        self.assertEqual(drive_module.format_bytes(1024 * 1024 * 1024), "1.0GB")
+
+    def test_cache_cap_is_one_gigabyte(self):
+        self.assertEqual(drive_module.MAX_STREAM_CACHE_BYTES, 1024 * 1024 * 1024)
+
+
+class DrivePrefetchTests(unittest.TestCase):
+    def _app(self, current, tracks, index, shuffle=False):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"shuffle": shuffle, "drive_api_key": ""}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.player = mock.Mock()
+        app.player.audio_ready = True
+        app.player.current = current
+        app.player.tracks = tracks
+        app.player.index = index
+        app.player.next_index.return_value = 1
+        app.paths = mock.Mock(app_dir="/app", data_dir="/data")
+        app._prefetch_base = None
+        app._prefetch_target = -1
+        return app
+
+    def test_prefetch_spawns_once_per_track(self):
+        import musicplayer.ui as ui_module
+        first = mock.Mock(path="drive://F1/a.mp3")
+        second = mock.Mock(path="drive://F2/b.mp3")
+        app = self._app(first, [first, second], 0)
+        with mock.patch.object(ui_module.threading, "Thread") as thread:
+            app._maybe_prefetch_drive()
+            app._maybe_prefetch_drive()
+        thread.assert_called_once()
+        args, kwargs = thread.call_args
+        self.assertEqual(kwargs["args"][0], second)
+
+    def test_prefetch_skips_shuffle_and_local(self):
+        import musicplayer.ui as ui_module
+        first = mock.Mock(path="drive://F1/a.mp3")
+        second = mock.Mock(path="drive://F2/b.mp3")
+        app = self._app(first, [first, second], 0, shuffle=True)
+        with mock.patch.object(ui_module.threading, "Thread") as thread:
+            app._maybe_prefetch_drive()
+        thread.assert_not_called()
+        local = mock.Mock(path="/music/a.mp3")
+        app2 = self._app(local, [local, second], 0)
+        with mock.patch.object(ui_module.threading, "Thread") as thread:
+            app2._maybe_prefetch_drive()
+        thread.assert_not_called()
+
+    def test_prefetch_worker_downloads_quietly(self):
+        track = mock.Mock(path="drive://F9/song.flac")
+        with mock.patch("musicplayer.ui.drive_ensure_stream_file") as ensure:
+            MusicPlayerApp._prefetch_drive_track(track, "", "/app", "/data")
+        entry = ensure.call_args.args[2]
+        self.assertEqual(entry.file_id, "F9")
+        self.assertEqual(entry.extension, ".flac")
+        with mock.patch("musicplayer.ui.drive_ensure_stream_file") as ensure:
+            MusicPlayerApp._prefetch_drive_track(mock.Mock(path="/m/s.mp3"), "", "/a", "/d")
+        ensure.assert_not_called()
 
 
 if __name__ == "__main__":
