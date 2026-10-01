@@ -17,6 +17,7 @@ from .drive import (
     extract_folder_id as drive_extract_folder_id,
     get_cached_folder as drive_get_cached,
     list_folder as drive_list_folder,
+    list_folder_public as drive_list_public,
     put_cached_folder as drive_put_cache,
 )
 from .input import InputState
@@ -1048,6 +1049,12 @@ class MusicPlayerApp:
             return
         self.drive_busy = True
         try:
+            self._drive_refresh_inner(page_token, append)
+        finally:
+            self.drive_busy = False
+
+    def _drive_refresh_inner(self, page_token="", append=False):
+        try:
             folder_id, _name = self._drive_current()
         except Exception:
             folder_id = self._drive_folder_id()
@@ -1060,23 +1067,13 @@ class MusicPlayerApp:
             app_dir = self.paths.app_dir
         except Exception:
             app_dir = ""
-        if not api_key:
-            cached = drive_get_cached(data_dir, folder_id, page_token) if data_dir else None
-            if cached is not None:
-                entries, token = cached
-                self.drive_entries = (self.drive_entries + entries) if append else entries
-                self.drive_page_token = token
-                self.drive_loaded = True
-                self.status = "Drive offline cache (%d items)" % len(self.drive_entries)
-                self.status_error = False
-            else:
-                self.status = "Set drive_api_key in settings.json, then Drive Refresh"
-                self.status_error = True
-            return
         try:
-            entries, token = drive_list_folder(
-                app_dir, folder_id, api_key, page_token, 25,
-            )
+            if api_key:
+                entries, token = drive_list_folder(
+                    app_dir, folder_id, api_key, page_token, 25,
+                )
+            else:
+                entries, token = drive_list_public(app_dir, folder_id)
         except DriveError as error:
             cached = drive_get_cached(data_dir, folder_id, page_token) if data_dir else None
             if cached is not None:
@@ -1084,10 +1081,10 @@ class MusicPlayerApp:
                 self.drive_entries = (self.drive_entries + cached_entries) if append else cached_entries
                 self.drive_page_token = cached_token
                 self.drive_loaded = True
-                self.status = "Drive offline (%s)" % error
-                self.status_error = True
+                self.status = "Drive offline cache (%d items)" % len(self.drive_entries)
+                self.status_error = False
             else:
-                self.status = "Drive: %s" % error
+                self.status = "Drive: %s - check Wi-Fi" % error
                 self.status_error = True
             get_logger().warning("drive list failed: %s", error)
             return
@@ -1096,8 +1093,6 @@ class MusicPlayerApp:
             self.status_error = True
             get_logger().warning("drive list failed: %s", error)
             return
-        finally:
-            self.drive_busy = False
         try:
             if data_dir:
                 if append:
@@ -1543,12 +1538,10 @@ class MusicPlayerApp:
         if not rows:
             if getattr(self, "drive_busy", False):
                 message = "Loading Drive..."
-            elif not self._drive_api_key():
-                message = "Drive needs drive_api_key in settings.json"
             else:
-                message = "Drive folder is empty"
+                message = "Drive is empty or offline"
             self.text(message, self.width // 2, self.height // 2 - 35, "hero", center=True)
-            self.text("SELECT menu: Drive Refresh", self.width // 2, self.height // 2 + 25, "small", self.MUTED, center=True)
+            self.text("Check Wi-Fi, then SELECT menu: Drive Refresh", self.width // 2, self.height // 2 + 25, "small", self.MUTED, center=True)
             return
         visible_rows = self.visible_rows()
         self.scroll = min(self.scroll, self.selection)

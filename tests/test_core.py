@@ -1464,6 +1464,74 @@ class DriveTests(unittest.TestCase):
         self.assertIn("uc?export=download", keyless)
         self.assertIn("FILE1234567890", keyless)
 
+    def test_parse_embed_page_reads_folders_and_audio_only(self):
+        markup = (
+            '<div class="flip-entries">'
+            '<div class="flip-entry" id="entry-AAAABBBBCCCCDDDDe1" tabindex="0" role="link">'
+            '<a href="https://drive.google.com/drive/folders/AAAABBBBCCCCDDDDe1" target="_blank">'
+            '<div class="flip-entry-title">My Album &amp; More</div></a></div>'
+            '<div class="flip-entry" id="entry-AAAABBBBCCCCDDDDe2" tabindex="0" role="link">'
+            '<a href="https://drive.google.com/file/d/AAAABBBBCCCCDDDDe2/view?usp=drive_web">'
+            '<div class="flip-entry-title">01 Song.flac</div></a></div>'
+            '<div class="flip-entry" id="entry-AAAABBBBCCCCDDDDe3" tabindex="0" role="link">'
+            '<a href="https://drive.google.com/file/d/AAAABBBBCCCCDDDDe3/view?usp=drive_web">'
+            '<div class="flip-entry-title">notes.txt</div></a></div>'
+            "</div>"
+        )
+        entries, token = drive_module.parse_embed_page(markup)
+        self.assertEqual(token, "")
+        by_id = {entry.file_id: entry for entry in entries}
+        self.assertTrue(by_id["AAAABBBBCCCCDDDDe1"].is_folder)
+        self.assertEqual(by_id["AAAABBBBCCCCDDDDe1"].name, "My Album & More")
+        self.assertFalse(by_id["AAAABBBBCCCCDDDDe2"].is_folder)
+        self.assertEqual(by_id["AAAABBBBCCCCDDDDe2"].extension, ".flac")
+        self.assertNotIn("AAAABBBBCCCCDDDDe3", by_id)
+        with self.assertRaises(DriveError):
+            drive_module.parse_embed_page("<html>no entries here</html>")
+
+    def test_public_listing_needs_no_api_key(self):
+        markup = (
+            '<div class="flip-entry" id="entry-AAAABBBBCCCCDDDDe1">'
+            '<a href="https://drive.google.com/drive/folders/AAAABBBBCCCCDDDDe1">'
+            '<div class="flip-entry-title">Album</div></a></div>'
+        ).encode("utf-8")
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = markup
+        response.__exit__.return_value = False
+        with mock.patch("musicplayer.drive.verified_context", return_value=None), \
+                mock.patch("musicplayer.drive.urllib.request.urlopen", return_value=response) as open_url:
+            entries, token = drive_module.list_folder_public("/app", DEFAULT_FOLDER_ID)
+        request = open_url.call_args.args[0]
+        self.assertIn("embeddedfolderview", request.full_url)
+        self.assertNotIn("key=", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0].is_folder)
+
+    def test_drive_refresh_without_key_uses_public_listing(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"drive_folder_id": DEFAULT_FOLDER_ID, "drive_api_key": ""}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.paths = mock.Mock(app_dir="/app", data_dir="/nonexistent-data-dir")
+        app.drive_stack = []
+        app.drive_entries = []
+        app.drive_page_token = ""
+        app.drive_busy = False
+        app.drive_loaded = False
+        app.selection = 0
+        app.status = ""
+        app.status_error = False
+        fake = [mock.Mock(file_id="F1", is_folder=True)]
+        with mock.patch("musicplayer.ui.drive_list_public", return_value=(fake, "")) as public, \
+                mock.patch("musicplayer.ui.drive_put_cache"):
+            app._drive_refresh()
+        public.assert_called_once_with("/app", DEFAULT_FOLDER_ID)
+        self.assertEqual(app.drive_entries, fake)
+        self.assertTrue(app.drive_loaded)
+        self.assertFalse(app.drive_busy)
+        self.assertNotIn("settings.json", app.status)
+
     def test_cache_roundtrip_and_clear(self):
         with tempfile.TemporaryDirectory() as root:
             entries, _token = parse_list_response({

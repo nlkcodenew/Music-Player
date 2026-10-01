@@ -1,14 +1,18 @@
 """Google Drive public-folder browsing for Buoc B.
 
-Uses a public (restricted) API key as a query parameter only -- no OAuth,
-no Authorization header, no tokens. Folder listing goes through
-``files.list`` with a small ``pageSize`` and minimal ``fields`` so the
-device never scans the whole (~5TB) share into RAM. Per-track playback
-downloads a single file to disk in small chunks (RAM-safe) and plays the
-local cached copy with SDL_mixer. Offline copies go to
-``Music/Drive/<Album>/`` so they appear in the normal local library.
+Works out of the box with no API key: public folder pages are read through
+Drive's keyless embedded folder view and single tracks download through the
+keyless ``uc?export=download`` endpoint -- no OAuth, no Authorization
+header, no tokens. If the user puts a public (restricted) API key in
+``drive_api_key``, listing upgrades to ``files.list`` with a small
+``pageSize`` and minimal ``fields`` so the device never scans the whole
+(~5TB) share into RAM. Per-track playback downloads a single file to disk
+in small chunks (RAM-safe) and plays the local cached copy with SDL_mixer.
+Offline copies go to ``Music/Drive/<Album>/`` so they appear in the normal
+local library.
 """
 
+import html as html_module
 import json
 import os
 import re
@@ -31,6 +35,9 @@ OFFLINE_SUBDIR = "Drive"
 MAX_TRACK_BYTES = 700 * 1024 * 1024
 CHUNK_SIZE = 64 * 1024
 FOLDER_MIME = "application/vnd.google-apps.folder"
+EMBED_VIEW_URL = "https://drive.google.com/embeddedfolderview?id=%s#list"
+MAX_EMBED_BYTES = 4 * 1024 * 1024
+MAX_PUBLIC_ENTRIES = 500
 
 _FOLDER_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{10,}")
 
@@ -201,6 +208,69 @@ def list_folder(app_dir, folder_id, api_key, page_token="", page_size=PAGE_SIZE)
     except ValueError:
         raise DriveError("invalid Drive response")
     return parse_list_response(payload)
+
+
+def parse_embed_page(markup):
+    """Parse a keyless embeddedfolderview page into DriveEntry items.
+
+    Keeps folders and audio files only; returns (entries, "") since the
+    page already lists the whole folder -- callers fetch one page per
+    folder the user actually opens, never the full share.
+    """
+    if isinstance(markup, (bytes, bytearray)):
+        markup = bytes(markup).decode("utf-8", "replace")
+    if not isinstance(markup, str) or "flip-entry" not in markup:
+        raise DriveError("invalid Drive folder page")
+    entries = []
+    for block in markup.split('<div class="flip-entry" id="entry-')[1:]:
+        file_id = block.split('"', 1)[0]
+        if not re.fullmatch(r"[A-Za-z0-9_-]{10,}", file_id):
+            continue
+        head = block[:2500]
+        href_match = re.search(r'href="([^"]+)"', head)
+        title_match = re.search(r'class="flip-entry-title"[^>]*>([^<]*)<', head)
+        if not href_match or not title_match:
+            continue
+        href = href_match.group(1)
+        name = html_module.unescape(title_match.group(1)).strip()
+        if not name:
+            continue
+        folder_match = re.search(r"/drive/folders/([A-Za-z0-9_-]{10,})", href)
+        file_match = re.search(r"/file/d/([A-Za-z0-9_-]{10,})", href)
+        if folder_match:
+            real_id = folder_match.group(1)
+            is_folder = True
+        elif file_match:
+            real_id = file_match.group(1)
+            is_folder = False
+        else:
+            continue
+        if not is_folder and not is_audio_name(name):
+            continue
+        extension = "" if is_folder else os.path.splitext(name)[1].lower()
+        entries.append(DriveEntry(
+            file_id=real_id,
+            name=name,
+            mime_type=FOLDER_MIME if is_folder else "",
+            size=0,
+            is_folder=is_folder,
+            title=os.path.splitext(name)[0],
+            extension=extension,
+        ))
+        if len(entries) >= MAX_PUBLIC_ENTRIES:
+            break
+    return entries, ""
+
+
+def list_folder_public(app_dir, folder_id):
+    """List one public folder with no API key (keyless embed view)."""
+    if not folder_id:
+        raise DriveError("Drive folder is not configured")
+    url = EMBED_VIEW_URL % urllib.parse.quote(str(folder_id), safe="")
+    raw = _fetch_bytes(app_dir, url, MAX_EMBED_BYTES)
+    if len(raw) > MAX_EMBED_BYTES:
+        raise DriveError("Drive folder page exceeds size limit")
+    return parse_embed_page(raw)
 
 
 def cache_file(data_dir):
