@@ -22,10 +22,11 @@ from .drive import (
     list_folder_public as drive_list_public,
     put_cached_folder as drive_put_cache,
     stream_cache_size as drive_cache_size,
+    stream_path as drive_stream_path,
 )
 from .input import InputState
 from .identity import installation_id
-from .audio_format import format_rate, format_spec, track_audio_info
+from .audio_format import format_spec
 from .leds import LedController
 from .library import Track
 from .logger import get_logger
@@ -1780,7 +1781,7 @@ class MusicPlayerApp:
         total_width = self.measure(total, "small")[0]
         self.text(total, bar_x + bar_w - total_width, times_y, "small", self.MUTED)
         self.text(
-            self._playback_status_line(), center_x, times_y + 24, "small", self.MUTED, center=True,
+            self._audio_status_line(), center_x, times_y + 24, "small", self.MUTED, center=True,
         )
         content_bottom = times_y + 24 + 22
         status_top = self.height - 62 - 38
@@ -1789,42 +1790,57 @@ class MusicPlayerApp:
         max_h = max(80, min(260, max_h))
         self._render_spectrum(spec_base, max_h, gain=3.0)
 
-    def _format_line(self, track, source_rate, source_bits, output_rate):
+    def _drive_cached_path(self, track):
+        try:
+            path = getattr(track, "path", "")
+            if not path.startswith("drive://"):
+                return ""
+            remainder = path[len("drive://"):]
+            file_id = remainder.split("/", 1)[0]
+            filename = remainder.split("/", 1)[1] if "/" in remainder else "track"
+            import os as _os
+            candidate = drive_stream_path(
+                self.paths.data_dir, file_id, _os.path.splitext(filename)[1].lower()
+            )
+            return candidate if _os.path.isfile(candidate) else ""
+        except Exception:
+            return ""
+
+    def _audio_status_line(self):
+        track = self.player.current if getattr(self, "player", None) else None
+        spec = ""
+        if track is not None:
+            try:
+                codec = (getattr(track, "extension", "") or "").upper().lstrip(".")
+            except Exception:
+                codec = ""
+            if not isinstance(codec, str):
+                codec = ""
+            probe = getattr(track, "path", "")
+            if not isinstance(probe, str):
+                probe = ""
+            if probe.startswith("drive://"):
+                probe = self._drive_cached_path(track) or probe
+            try:
+                spec = format_spec(probe)
+            except Exception:
+                spec = ""
+            if not isinstance(spec, str):
+                spec = ""
+            if spec and codec and spec != codec and not spec.startswith(codec + " "):
+                spec = "%s %s" % (codec, spec)
+            elif not spec:
+                spec = codec
         try:
             output_label = getattr(self.player, "output_device", "") or ""
         except Exception:
             output_label = ""
-        if "USB" in output_label:
-            output_name = "USB DAC"
-        elif output_label:
-            output_name = "Built-in"
-        else:
-            output_name = "Built-in"
-        if source_rate and output_rate:
-            source_text = "%d Hz" % source_rate
-            if source_bits:
-                source_text += "/%d-bit" % source_bits
-            return "%s -> %d Hz/16-bit   %s" % (source_text, output_rate, output_name)
-        try:
-            return "%s   %s" % (format_spec(track.path), output_name)
-        except Exception:
-            return output_name
-
-    def _playback_status_line(self):
-        try:
-            paused = bool(self.runtime.Mix_PausedMusic())
-        except Exception:
-            paused = False
-        state = "Paused" if paused else "Playing"
-        try:
-            shuffle = "on" if self.settings.get("shuffle") else "off"
-        except Exception:
-            shuffle = "off"
-        try:
-            repeat = self.settings.get("repeat")
-        except Exception:
-            repeat = "off"
-        return "%s   L2 shuffle %s   R2 repeat %s" % (state, shuffle, repeat)
+        if not isinstance(output_label, str):
+            output_label = ""
+        output_name = "USB DAC" if "USB" in output_label else "Built-in"
+        if spec:
+            return "%s   %s" % (spec, output_name)
+        return output_name
 
     def _render_spectrum(self, baseline_y, max_h=160, gain=3.0):
         try:

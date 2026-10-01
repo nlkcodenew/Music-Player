@@ -1171,20 +1171,40 @@ class TruepodStyleTests(unittest.TestCase):
         self.assertFalse(app._toggle_intro())
         app.settings.save.assert_called_once()
 
-    def test_playback_status_line_mentions_controls(self):
+    def test_audio_status_line_shows_bitrate_and_output(self):
+        import wave
         app = MusicPlayerApp.__new__(MusicPlayerApp)
-        app.runtime = mock.Mock()
-        app.runtime.Mix_PausedMusic.return_value = 0
-        values = {"shuffle": False, "repeat": "all", "volume": 14}
-        app.settings = mock.Mock()
-        app.settings.get.side_effect = values.get
-        line = app._playback_status_line()
-        self.assertIn("Playing", line)
-        self.assertIn("shuffle off", line)
-        self.assertIn("repeat all", line)
-        self.assertNotIn("vol", line)
-        self.assertIn("L2", line)
-        self.assertIn("R2", line)
+        app.player = mock.Mock(output_device="FiiO USB DAC")
+        with tempfile.TemporaryDirectory() as root:
+            song = os.path.join(root, "song.wav")
+            with wave.open(song, "wb") as handle:
+                handle.setnchannels(2)
+                handle.setsampwidth(2)
+                handle.setframerate(44100)
+                handle.writeframes(b"\x00\x00" * 100)
+            app.paths = mock.Mock(data_dir=root)
+            app.player.current = mock.Mock(path=song, extension=".wav")
+            line = app._audio_status_line()
+        self.assertIn("44.1k/16", line)
+        self.assertIn("USB DAC", line)
+        app.player.current = mock.Mock(path="/music/song.ogg", extension=".ogg")
+        app.player.output_device = "System / Bluetooth"
+        self.assertIn("OGG", app._audio_status_line())
+        self.assertIn("Built-in", app._audio_status_line())
+
+    def test_drive_cached_path_prefers_downloaded_file(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        with tempfile.TemporaryDirectory() as root:
+            app.paths = mock.Mock(data_dir=root)
+            track = mock.Mock(path="drive://FILEID1234567890/song.mp3")
+            self.assertEqual(app._drive_cached_path(track), "")
+            cached = os.path.join(root, "drive-cache")
+            os.makedirs(cached, exist_ok=True)
+            with open(os.path.join(cached, "FILEID1234567890.mp3"), "wb") as handle:
+                handle.write(b"ID3")
+            app.player = mock.Mock(output_device="")
+            app.player.current = mock.Mock(path="drive://FILEID1234567890/song.mp3", extension=".mp3")
+            self.assertIn("MP3", app._audio_status_line())
 
     def test_y_saves_current_drive_track(self):
         import musicplayer.ui as ui_module
