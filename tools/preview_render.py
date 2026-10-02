@@ -132,15 +132,19 @@ def build_app(screen="library", mode="drive", width=1024, height=768):
     app.drive_loaded = True
     app.drive_stack = [("F1", "Drive 2")]
     app.drive_entries = [
-        DriveEntry(file_id="F1", name="Bai chua luu.mp3", mime_type="",
-                   size=7 * 1024 * 1024, is_folder=False, title="Bai chua luu",
-                   extension=".mp3"),
-        DriveEntry(file_id="F2", name="Bai da luu roi.mp3", mime_type="",
-                   size=5 * 1024 * 1024, is_folder=False, title="Bai da luu roi",
-                   extension=".mp3"),
-        DriveEntry(file_id="F3", name="Vol 2 - Mot bai rat co ten dai.mp3",
-                   mime_type="", size=3 * 1024 * 1024, is_folder=False,
-                   title="Vol 2 - Mot bai rat co ten dai", extension=".mp3"),
+        DriveEntry(file_id="F1", name="04. giac mo con mai - le quuyen [FLAC].flac",
+                   mime_type="", size=7 * 1024 * 1024, is_folder=False,
+                   title="04. giac mo con mai - le quuyen [FLAC]",
+                   extension=".flac"),
+        DriveEntry(file_id="F2", name="05 - Thoi Dung Chiem Bao.flac",
+                   mime_type="", size=34 * 1024 * 1024, is_folder=False,
+                   title="05 - Thoi Dung Chiem Bao", extension=".flac"),
+        DriveEntry(
+            file_id="F3",
+            name="Le Quyen - Vol. 1 - Giac Mo Co That (2004) [FLAC] (L2Bits).flac",
+            mime_type="", size=3 * 1024 * 1024, is_folder=False,
+            title="Le Quyen - Vol. 1 - Giac Mo Co That (2004) [FLAC] (L2Bits)",
+            extension=".flac"),
     ]
     app.preview = Preview(width, height)
     app.runtime = app.preview
@@ -203,17 +207,25 @@ def mock_paths():
     return Paths()
 
 
+SAVED_ON_DEVICE = {
+    "05 - Thoi Dung Chiem Bao.flac": [("x", 35651584)],
+    "Le Quyen - Vol. 1 - Giac Mo Co That (2004) [FLAC] (L2Bits).flac": [("y", 3145728)],
+}
+
+
 def main():
-    # 1. Danh sach Drive: co bai dang tai (% tai cho) + bai da co ON DEVICE.
+    # 1. Danh sach Drive: bai dang tai (% tai cho) + 2 bai da co ON DEVICE,
+    # trong do 1 bai ten rat dai - kiem tra badge o cot co dinh khong bi day.
     app = build_app("library", "drive")
     app.player = FakePlayer(app.tracks[0])
-    app._saved_toast = ("Bai da luu roi", 9e9)
+    app._saved_toast = ("04. giac mo con mai - le quuyen [FLAC].flac", 9e9)
     entry = app.drive_entries[0]
-    job = drive_module.StreamJob("offline:/x/Bai chua luu.mp3", "Bai chua luu",
+    job = drive_module.StreamJob("offline:/x/a.flac",
+                                 "04. giac mo con mai - le quuyen [FLAC]",
                                  7 * 1024 * 1024, "offline", entry=entry)
     job.update(2 * 1024 * 1024 + 300 * 1024)
     app.download_job = job
-    drive_module._OFFLINE_INDEX["items"] = {"Bai da luu roi.mp3": [("x", 5242880)]}
+    drive_module._OFFLINE_INDEX["items"] = dict(SAVED_ON_DEVICE)
     drive_module._OFFLINE_INDEX["at"] = 9e9
     app._render()
     app.preview.save("01-drive-list-with-inline-progress.png")
@@ -231,11 +243,11 @@ def main():
     app._render()
     app.preview.save("02-playing-download-strip.png")
 
-    # 3. Thong bao xong: chi ten bai, khong duong dan.
+    # 3. Thong bao xong: ten file day du kem duoi, khong duong dan.
     app = build_app("playing")
     app.player = FakePlayer(app.tracks[1])
-    app._saved_toast = ("Bai da luu roi", 9e9)
-    app.status = "Saved: Bai da luu roi"
+    app._saved_toast = ("04. giac mo con mai - le quuyen [FLAC].flac", 9e9)
+    app.status = "Saved: 04. giac mo con mai - le quuyen [FLAC].flac"
     app._render()
     app.preview.save("03-saved-toast-name-only.png")
 

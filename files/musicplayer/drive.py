@@ -753,8 +753,19 @@ _OFFLINE_INDEX = {"at": 0.0, "items": {}}
 _OFFLINE_INDEX_TTL = 15.0
 
 
+def offline_key(name):
+    """Khoa so sanh ten file giua Drive va ban da luu tren may.
+
+    ``sanitize_component`` chay khi luu (gom khoang trang, bo ky tu la, cat
+    con 80 ky tu) nen ten file tren dia co the lech nhe voi ten Drive. Chu
+    hoa ca hai ve bang cung mot phep bien doi va bo phan biet HOA THUONG, neu
+    khong bai da tai se khong tim ra ban da co tren may.
+    """
+    return sanitize_component(os.path.basename(str(name or "")), "").lower()
+
+
 def offline_index(music_dir, max_age=_OFFLINE_INDEX_TTL):
-    """{ten file da luu -> [(duong dan, kich thuoc)]} trong ``Music/Drive/``.
+    """{offline_key(ten) -> [(duong dan, kich thuoc)]} trong ``Music/Drive/``.
 
     Mot bai Drive duoc luu o nhieu thu muc khac nhau se xuat hien nhieu lan;
     chi muc nay cho app biet bai da ton tai chua, khong tai lai. Index duoc
@@ -769,14 +780,18 @@ def offline_index(music_dir, max_age=_OFFLINE_INDEX_TTL):
             return cached["items"]
     items = {}
     for current, dirs, names in os.walk(root):
-        dirs[:] = sorted(dirs)
+        dirs[:] = sorted(name for name in dirs if not name.startswith("."))
         for name in names:
+            if name.startswith("."):
+                continue
             path = os.path.join(current, name)
             try:
                 size = os.path.getsize(path)
             except OSError:
                 size = 0
-            items.setdefault(name, []).append((path, size))
+            key = offline_key(name)
+            if key:
+                items.setdefault(key, []).append((path, size))
     with _JOBS_LOCK:
         _OFFLINE_INDEX["items"] = items
         _OFFLINE_INDEX["at"] = now
@@ -787,15 +802,15 @@ def find_offline_copy(music_dir, filename, size=0, max_age=_OFFLINE_INDEX_TTL):
     """Duong dan ban da luu cua mot bai, hoac "" neu chua co.
 
     Mot bai Drive duoc luu o nhieu thu muc se xuat hien nhieu lan; ham nay
-    tra ve ban bat ky. Khop theo ten file. Neu biet kich thuoc (``size`` > 0,
-    Drive luon tra kich thuoc khi list) thi phai khop them kich thuoc, tranh
-    nham hai bai trung ten; chi khi khong biet kich thuoc moi chap nhan
-    trung ten.
+    tra ve ban bat ky. Khop theo ten file (da chuan hoa ca hai ve). Neu biet
+    kich thuoc (``size`` > 0, Drive luon tra kich thuoc khi list) thi phai
+    khop them kich thuoc, tranh nham hai bai trung ten trong hai thu muc
+    khac nhau; chi khi khong biet kich thuoc moi chap nhan trung ten.
     """
-    name = os.path.basename(str(filename or ""))
-    if not name:
+    key = offline_key(filename)
+    if not key:
         return ""
-    candidates = offline_index(music_dir, max_age).get(name, [])
+    candidates = offline_index(music_dir, max_age).get(key, [])
     if not candidates:
         return ""
     if size:

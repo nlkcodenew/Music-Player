@@ -1683,13 +1683,18 @@ class MusicPlayerApp:
         return job.path or None
 
     def _short_saved_name(self, entry, destination="", album=""):
-        """CHI ten bai da luu - khong kem duong dan hay ten thu muc.
+        """Ten bai da luu - DAY DU kem duoi file, khong kem duong dan.
 
-        Duong dan `/mnt/SDCARD/Music/Drive/<Thu muc>/<bai>.mp3` qua dai lam
-        manhinh cat mat ca ten bai, nen thong bao chi giu lai ten bai.
+        Duong dan `/mnt/SDCARD/Music/Drive/<thu muc>/<bai>.mp3` qua dai lam
+        manhinh cat mat ca ten bai, nen chi giu lai ten file. Giu nguyen duoi
+        file vi do la thu nguoi dung nhan ra bai do la gi.
         """
-        title = getattr(entry, "title", "") or (destination and os.path.basename(destination))
-        return str(title).rsplit(".", 1)[0]
+        name = str(getattr(entry, "name", "") or "").strip()
+        if not name and destination:
+            name = os.path.basename(str(destination))
+        if not name:
+            name = str(getattr(entry, "title", "") or "")
+        return name or "Done"
 
     def _note_saved(self, entry, destination, album=""):
         self._saved_toast = (self._short_saved_name(entry, destination, album),
@@ -2475,26 +2480,29 @@ class MusicPlayerApp:
                 self._draw_inline_progress(job, 32, y, self.width - 60, selected)
                 y += 52
                 continue
-            detail = self.ellipsize(detail, 245, "small")
-            detail_width = self.measure(detail, "small")[0]
-            self.text(detail, self.width - 32 - detail_width - spec_width, y + 5, "small", dim_color)
-            if spec:
-                spec_width_px = self.measure(spec, "small")[0]
-                self.text(spec, self.width - 28 - spec_width_px, y + 5, "small", spec_color)
+            spec_width_px = self.measure(spec, "small")[0] if spec else 0
             if row != "__more__" and not getattr(row, "is_folder", False) \
                     and self._drive_row_is_saved(row):
                 # Bai da co san tren may (ke ca o thu muc khac) -> danh dau
                 # de khong tai trung.
+                #
+                # Badge phai nam o MOT COT CO DINH o ben phai chu khong noi
+                # sau tieu de: bai ten dai se day badge ra ngoai man hinh, nen
+                # thu muc co bai ten ngan thi co danh dau con thu muc ten dai
+                # thi khong - thong bao "da co" o mot noi ma bi mat o noi khac.
                 badge = "ON DEVICE"
                 badge_w = self.measure(badge, "small")[0] + 16
-                # measure() tra (width, height) -> phai lay [0] truoc khi cong.
-                title_px = self.measure(
-                    self.ellipsize(title, self.width - 400 - spec_width, "body"), "body",
-                )[0]
-                badge_x = 32 + title_px + 14
-                if badge_x + badge_w < self.width - 300 - spec_width:
+                badge_x = self.width - 28 - spec_width_px - 10 - badge_w
+                if badge_x > 32 + 100:
                     self.fill(badge_x, y + 3, badge_w, 20, self.ACCENT_SOFT)
                     self.text(badge, badge_x + 8, y + 5, "small", self.ACCENT)
+            else:
+                detail = self.ellipsize(detail, 245, "small")
+                detail_width = self.measure(detail, "small")[0]
+                self.text(detail, self.width - 32 - detail_width - spec_width,
+                          y + 5, "small", dim_color)
+            if spec:
+                self.text(spec, self.width - 28 - spec_width_px, y + 5, "small", spec_color)
             y += 52
 
     def _drive_row_is_saved(self, row):

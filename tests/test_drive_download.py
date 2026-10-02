@@ -205,6 +205,31 @@ class OfflineIndexTests(unittest.TestCase):
         self.assertIn("a.mp3", index)
         self.assertIn("c.mp3", index)
 
+    def test_matches_name_after_sanitizing_and_case(self):
+        """Ten tren da da qua sanitize nen phai khop du khoang trang/hoa thuong.
+
+        `sanitize_component` gom khoang trang trung va cat con 80 ky tu khi
+        luu, nen bai da co tren may van phai tim ra khi hoi Drive.
+        """
+        saved = self._save("Album A", "Bai  hat  Rat  Dai.mp3")
+        self.assertEqual(find_offline_copy(self.music, "Bai  hat  Rat  Dai.mp3", 2048), saved)
+        self.assertEqual(find_offline_copy(self.music, "bai  hat  rat  dai.mp3", 2048), saved)
+
+    def test_long_name_matches_even_after_truncation(self):
+        long_name = "A" * 120 + ".flac"
+        saved = self._save("Album A", long_name)
+        # Ten Drive con nguyen 120 ky tu; ban tren da cat con 80 -> phai khop.
+        self.assertEqual(find_offline_copy(self.music, long_name, 2048), saved)
+
+    def test_index_ignores_hidden_files(self):
+        self._save("Album A", "a.mp3")
+        marker = os.path.join(self.music, "Drive", ".drive-saved.json")
+        with open(marker, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        index = offline_index(self.music, 0)
+        self.assertIn("a.mp3", index)
+        self.assertNotIn(".drive-saved.json", index)
+
     def test_offline_job_finishes_and_refreshes_index(self):
         saved = self._save("Album A", "Bai hat.mp3")
         self.assertTrue(os.path.isfile(saved))
@@ -266,7 +291,7 @@ class AppDownloadUiTests(unittest.TestCase):
         self.assertTrue(app._saved_toast[0])
         self.assertNotIn("/mnt/SDCARD", app._saved_toast[0])
         self.assertNotIn("/", app._saved_toast[0])
-        self.assertEqual(app._saved_toast[0], "song")
+        self.assertEqual(app._saved_toast[0], "song.mp3")
 
     def test_existing_copy_skips_download(self):
         app = self._app()
@@ -306,6 +331,65 @@ class AppDownloadUiTests(unittest.TestCase):
         self.assertEqual(path, "/data/drive-cache/x.mp3")
         self.assertTrue(rendered, "phai ve khung trong luc cho tai (khong treo)")
         self.assertEqual(app.download_job, None, "phai xoa job sau khi xong")
+
+    def test_badge_appears_even_with_a_very_long_title(self):
+        """Regression: badge nam sau tieu de nen bai ten dai lam no bien mat.
+
+        Thu muc nao co bai ten ngan thi co ON DEVICE, thu muc ten dai thi
+        khong - nghia la thong bao "da co bai" khong dung cho may.
+        """
+        app = self._app()
+        app.width, app.height = 1024, 768
+        app.screen = "library"
+        app.library_mode = "drive"
+        app.scroll = 0
+        app.selection = 0
+        app.drive_page_token = ""
+        app.drive_stack = [("F1", "Drive 2")]
+        long_title = "Le Quyen - Vol. 1 - Giac Mo Co That (2004) [FLAC] (L2Bits)"
+        app.drive_entries = [
+            DriveEntry(file_id="F1", name=long_title + ".flac", mime_type="",
+                       size=34 * 1024 * 1024, is_folder=False, title=long_title,
+                       extension=".flac"),
+        ]
+        app.fill = mock.Mock(side_effect=lambda *a: None)
+        drawn = []
+        app.text = mock.Mock(side_effect=lambda t, *a, **k: drawn.append(t))
+        # Font that tren may: chu nho hon nhieu so voi chu test gia lap.
+        app.measure = mock.Mock(side_effect=lambda t, font: (len(t) * 6, 12))
+        with mock.patch("musicplayer.ui.drive_find_offline_copy",
+                        return_value="/music/Drive/A/bai.flac"):
+            app._render_drive()
+        self.assertIn("ON DEVICE", drawn)
+        # Va khong duoc de tieu de chong len badge.
+        badges = [c for c in app.fill.call_args_list
+                  if c.args[2] > 60 and c.args[3] == 20]
+        self.assertTrue(badges)
+        badge_x = badges[0].args[0]
+        self.assertGreaterEqual(badge_x, 32 + 100)
+
+    def test_badge_and_spec_do_not_overlap(self):
+        app = self._app()
+        app.width, app.height = 1024, 768
+        app.screen = "library"
+        app.library_mode = "drive"
+        app.scroll = 0
+        app.selection = 1
+        app.drive_page_token = ""
+        app.drive_stack = [("F1", "Drive 2")]
+        app.drive_entries = [
+            entry(file_id="F1", name="a.mp3"),
+            entry(file_id="F2", name="b.mp3", size=34 * 1024 * 1024),
+        ]
+        app.fill = mock.Mock(side_effect=lambda *a: None)
+        app.text = mock.Mock(side_effect=lambda *a, **k: None)
+        app.measure = mock.Mock(side_effect=lambda t, font: (len(t) * 6, 12))
+        with mock.patch("musicplayer.ui.drive_find_offline_copy",
+                        return_value="/music/Drive/A/b.mp3"):
+            app._render_drive()
+        badge = [c for c in app.fill.call_args_list if c.args[3] == 20]
+        self.assertTrue(badge, "bai da luu phai co badge")
+        self.assertLessEqual(badge[0].args[0] + badge[0].args[2], 1024 - 28 - 40)
 
     def test_row_marked_saved_when_copy_exists(self):
         app = self._app()
@@ -508,15 +592,25 @@ class AppDownloadUiTests(unittest.TestCase):
                   folder="B", extension=".mp3")))
 
     def test_saved_message_has_no_path(self):
-        """Thong bao xong chi giu ten bai, khong lan duong dan vao."""
+        """Thong bao xong giu TEN FILE day du kem duoi, khong lan duong dan."""
         app = self._app()
         long_path = ("/mnt/SDCARD/Music/Drive/Moi thu muc rat dai va co "
-                     "ten vo cung dai/Bai hat cua toi.mp3")
+                     "ten vo cung dai/04. giac mo con mai - le quuyen [FLAC].flac")
         name = app._short_saved_name(entry(name=os.path.basename(long_path)),
                                      long_path)
         self.assertNotIn("/", name)
         self.assertNotIn("\\", name)
-        self.assertEqual(name, "Bai hat cua toi")
+        self.assertEqual(name, "04. giac mo con mai - le quuyen [FLAC].flac")
+
+    def test_saved_name_falls_back_to_path_then_title(self):
+        """Khong co `name` thi lay basename duong dan, roi den `title`."""
+        app = self._app()
+        blank = DriveEntry(file_id="F9", name="", mime_type="", size=0,
+                          is_folder=False, title="", extension="")
+        self.assertEqual(
+            app._short_saved_name(blank, "/music/Drive/A/ten bai.mp3"),
+            "ten bai.mp3")
+        self.assertEqual(app._short_saved_name(entry(), ""), "song.mp3")
 
 
 if __name__ == "__main__":
