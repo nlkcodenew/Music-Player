@@ -18,6 +18,8 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -491,7 +493,8 @@ def enforce_stream_cache_limit(data_dir, protect=()):
     return total
 
 
-def _download_to_path(app_dir, url, destination, expected_size=0):
+def _download_to_path(app_dir, url, destination, expected_size=0, progress=None,
+                      should_cancel=None):
     if urllib.parse.urlparse(url).scheme != "https":
         raise DriveError("Drive only accepts HTTPS URLs")
     request = urllib.request.Request(
@@ -512,9 +515,12 @@ def _download_to_path(app_dir, url, destination, expected_size=0):
             raise DriveError("Drive network: %s" % error.reason)
         with response:
             total = 0
+            announced = 0
             with os.fdopen(descriptor, "wb") as handle:
                 descriptor = -1
                 while True:
+                    if should_cancel is not None and should_cancel():
+                        raise DriveError("Download cancelled")
                     chunk = response.read(CHUNK_SIZE)
                     if not chunk:
                         break
@@ -522,8 +528,14 @@ def _download_to_path(app_dir, url, destination, expected_size=0):
                     if total > MAX_TRACK_BYTES:
                         raise DriveError("Drive track exceeds size limit")
                     handle.write(chunk)
+                    # Cap nhat % o moi ~256KB de UI khong bi ghet boi thong bao.
+                    if progress is not None and total - announced >= 256 * 1024:
+                        announced = total
+                        progress(total)
                 handle.flush()
                 os.fsync(handle.fileno())
+        if progress is not None:
+            progress(total)
         if expected_size and total != expected_size:
             get_logger().warning(
                 "drive download size mismatch expected=%d actual=%d", expected_size, total
@@ -541,30 +553,262 @@ def _download_to_path(app_dir, url, destination, expected_size=0):
 
 
 def ensure_stream_file(app_dir, data_dir, entry, api_key=""):
-    """Download one track to the disk stream cache (RAM-safe), return path."""
+    """Download one track to the disk stream cache (RAM-safe), return path.
+
+    Blocking: chi dung khi nguoi goi ro rang cho phep cho. Man hinh chinh nen
+    dung ``start_stream_job`` de co % va khong bao gio treo app.
+    """
     if entry.is_folder:
         raise DriveError("cannot stream a folder")
     destination = stream_path(data_dir, entry.file_id, entry.extension)
-    if os.path.isfile(destination) and os.path.getsize(destination) > 0:
-        if not entry.size or os.path.getsize(destination) == entry.size:
-            try:
-                os.utime(destination, None)
-            except OSError:
-                pass
-            return destination
-    if api_key:
-        urls = [media_url(entry.file_id, api_key), public_download_url(entry.file_id)]
-    else:
-        urls = [public_download_url(entry.file_id)]
+    if _cached_ok(destination, entry.size):
+        return destination
     errors = []
-    for url in urls:
+    for url in _stream_urls(entry, api_key):
         try:
             _download_to_path(app_dir, url, destination, entry.size)
-            enforce_stream_cache_limit(data_dir, protect=(destination,))
-            return destination
         except DriveError as error:
             errors.append(str(error))
+            continue
+        enforce_stream_cache_limit(data_dir, protect=(destination,))
+        return destination
     raise DriveError("; ".join(errors) or "Drive download failed")
+
+
+def _cached_ok(destination, expected_size=0):
+    try:
+        if not os.path.isfile(destination) or os.path.getsize(destination) <= 0:
+            return False
+    except OSError:
+        return False
+    if expected_size and os.path.getsize(destination) != expected_size:
+        return False
+    try:
+        os.utime(destination, None)
+    except OSError:
+        pass
+    return True
+
+
+def _stream_urls(entry, api_key=""):
+    if api_key:
+        return [media_url(entry.file_id, api_key), public_download_url(entry.file_id)]
+    return [public_download_url(entry.file_id)]
+
+
+# ---------------------------------------------------------------------
+# Job tai dung chung: mot file_id = mot lan tai
+#
+# Truoc day prefetch (thread nen) va man hinh chinh (thread UI) tai cung mot
+# file theo hai duong doc lap: khi prefetch con chay ma bai hat het, UI lai
+# tai them mot ban o thread chinh nen app DONG BANG trong suot qua trong tai
+# (khong co Present, khong nut bam) -- day la ly do "den bai thu 3 la treo cung".
+# Gio ca hai cung dung mot StreamJob nen UI chi can CHO, khong tai lai.
+# ---------------------------------------------------------------------
+
+
+class StreamJob:
+    """Trang thai mot lan tai mot file Drive."""
+
+    def __init__(self, file_id, title="", total=0, kind="stream", entry=None, album=""):
+        self.file_id = file_id
+        self.title = title
+        self.kind = kind
+        self.entry = entry
+        self.album = album
+        self.total = int(total or 0)
+        self.bytes = 0
+        self.done = False
+        self.error = ""
+        self.path = ""
+        self.cancelled = False
+        self.started_at = time.monotonic()
+        self.finished_at = 0.0
+
+    @property
+    def running(self):
+        return not self.done
+
+    @property
+    def percent(self):
+        if self.total > 0:
+            return max(0.0, min(1.0, float(self.bytes) / float(self.total)))
+        # Khong biet tong: dung so byte da tai lam % uoc luong de UI van chay.
+        return max(0.0, min(0.99, float(self.bytes) / (6.0 * 1024 * 1024)))
+
+    def label(self):
+        if self.error:
+            return self.error
+        if self.done:
+            return self.title or "Done"
+        # Luon co % de nguoi dung thay doi thay doi, ke khi chua biet tong.
+        return "%s  %d%%" % (self.title, int(self.percent * 100))
+
+    def update(self, total):
+        try:
+            self.bytes = int(total)
+        except (TypeError, ValueError):
+            pass
+
+    def finish(self, path=""):
+        self.path = path
+        self.done = True
+        self.finished_at = time.monotonic()
+
+    def fail(self, message):
+        self.error = str(message)
+        self.done = True
+        self.finished_at = time.monotonic()
+
+    def cancel(self):
+        self.cancelled = True
+
+    def is_cancelled(self):
+        return self.cancelled
+
+
+_JOBS = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def stream_job(file_id):
+    with _JOBS_LOCK:
+        return _JOBS.get(str(file_id))
+
+
+def _register_job(job):
+    with _JOBS_LOCK:
+        existing = _JOBS.get(job.file_id)
+        if existing is not None and existing.running:
+            return existing
+        _JOBS[job.file_id] = job
+        return job
+
+
+def _drop_job(job):
+    with _JOBS_LOCK:
+        if _JOBS.get(job.file_id) is job:
+            _JOBS.pop(job.file_id, None)
+
+
+def start_stream_job(app_dir, data_dir, entry, api_key=""):
+    """Bat dau (hoac dung lai) tai mot file Drive. Tra ve StreamJob.
+
+    Neu file da co san tren dia -> job da xong ngay. Neu dang co mot tai
+    cung chay -> tra ve chinh job do (khong tai trung).
+    """
+    if getattr(entry, "is_folder", False):
+        raise DriveError("cannot stream a folder")
+    destination = stream_path(data_dir, entry.file_id, entry.extension)
+    with _JOBS_LOCK:
+        existing = _JOBS.get(str(entry.file_id))
+    if existing is not None and existing.running:
+        return existing
+    job = _register_job(StreamJob(entry.file_id, entry.title, entry.size, "stream"))
+    if _cached_ok(destination, entry.size):
+        job.finish(destination)
+        return job
+
+    def worker():
+        try:
+            errors = []
+            for url in _stream_urls(entry, api_key):
+                if job.is_cancelled():
+                    raise DriveError("Download cancelled")
+                try:
+                    _download_to_path(
+                        app_dir, url, destination, entry.size,
+                        progress=job.update, should_cancel=job.is_cancelled,
+                    )
+                except DriveError as error:
+                    errors.append(str(error))
+                    continue
+                enforce_stream_cache_limit(data_dir, protect=(destination,))
+                job.finish(destination)
+                get_logger().info("drive download done file=%s title=%r",
+                                  entry.file_id, entry.title)
+                return
+            job.fail("; ".join(errors) or "Drive download failed")
+            get_logger().warning("drive download failed file=%s: %s",
+                                 entry.file_id, job.error)
+        except Exception as error:  # pragma: no cover - defensive
+            job.fail(error)
+            get_logger().warning("drive download crashed: %s", error)
+
+    threading.Thread(target=worker, name="drive-download", daemon=True).start()
+    return job
+
+
+def clear_finished_jobs(keep=8):
+    """Giu toi da gioi khoang `keep` job xong de UI doc duoc, bo phan cu."""
+    with _JOBS_LOCK:
+        done = [key for key, job in _JOBS.items() if job.done]
+        if len(done) <= keep:
+            return
+        for key in done[:len(done) - keep]:
+            _JOBS.pop(key, None)
+
+
+_OFFLINE_INDEX = {"at": 0.0, "items": {}}
+_OFFLINE_INDEX_TTL = 15.0
+
+
+def offline_index(music_dir, max_age=_OFFLINE_INDEX_TTL):
+    """{ten file da luu -> [(duong dan, kich thuoc)]} trong ``Music/Drive/``.
+
+    Mot bai Drive duoc luu o nhieu thu muc khac nhau se xuat hien nhieu lan;
+    chi muc nay cho app biet bai da ton tai chua, khong tai lai. Index duoc
+    tao lai toi da ``max_age`` giay (va lam moi ngay sau khi luu xong) de
+    khong phai quet dia o moi khung ve.
+    """
+    root = os.path.join(music_dir, OFFLINE_SUBDIR)
+    now = time.monotonic()
+    with _JOBS_LOCK:
+        cached = _OFFLINE_INDEX
+        if cached["items"] and now - cached["at"] < max_age:
+            return cached["items"]
+    items = {}
+    for current, dirs, names in os.walk(root):
+        dirs[:] = sorted(dirs)
+        for name in names:
+            path = os.path.join(current, name)
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            items.setdefault(name, []).append((path, size))
+    with _JOBS_LOCK:
+        _OFFLINE_INDEX["items"] = items
+        _OFFLINE_INDEX["at"] = now
+    return items
+
+
+def find_offline_copy(music_dir, filename, size=0, max_age=_OFFLINE_INDEX_TTL):
+    """Duong dan ban da luu cua mot bai, hoac "" neu chua co.
+
+    Mot bai Drive duoc luu o nhieu thu muc se xuat hien nhieu lan; ham nay
+    tra ve ban bat ky. Khop theo ten file. Neu biet kich thuoc (``size`` > 0,
+    Drive luon tra kich thuoc khi list) thi phai khop them kich thuoc, tranh
+    nham hai bai trung ten; chi khi khong biet kich thuoc moi chap nhan
+    trung ten.
+    """
+    name = os.path.basename(str(filename or ""))
+    if not name:
+        return ""
+    candidates = offline_index(music_dir, max_age).get(name, [])
+    if not candidates:
+        return ""
+    if size:
+        for path, candidate_size in candidates:
+            if candidate_size == size:
+                return path
+        return ""
+    return candidates[0][0]
+
+
+def refresh_offline_index():
+    with _JOBS_LOCK:
+        _OFFLINE_INDEX["at"] = 0.0
 
 
 def offline_path(music_dir, album, filename):
@@ -572,6 +816,50 @@ def offline_path(music_dir, album, filename):
     parts = [part for part in parts if part] or ["Drive"]
     album_dir = os.path.join(music_dir, OFFLINE_SUBDIR, *parts)
     return os.path.join(album_dir, sanitize_component(filename, "track"))
+
+
+def start_offline_job(app_dir, music_dir, album, entry, api_key=""):
+    """Bat dau luu mot bai xuong ``Music/Drive/<Album>/`` (job nen, co %).
+
+    Job ``kind='offline'``. Tra ve StreamJob; neu bai da co san thi job xong
+    ngay va ``path`` tro toi ban do.
+    """
+    if entry.is_folder:
+        raise DriveError("cannot download a folder")
+    destination = offline_path(music_dir, album, entry.name)
+    key = "offline:%s" % destination
+    job = _register_job(StreamJob(key, entry.title, entry.size, "offline", entry, album))
+    if _cached_ok(destination, entry.size):
+        job.finish(destination)
+        return job
+
+    def worker():
+        try:
+            errors = []
+            for url in _stream_urls(entry, api_key):
+                if job.is_cancelled():
+                    raise DriveError("Download cancelled")
+                try:
+                    _download_to_path(
+                        app_dir, url, destination, entry.size,
+                        progress=job.update, should_cancel=job.is_cancelled,
+                    )
+                except DriveError as error:
+                    errors.append(str(error))
+                    continue
+                refresh_offline_index()
+                job.finish(destination)
+                get_logger().info("drive offline saved=%s", destination)
+                return
+            job.fail("; ".join(errors) or "Drive download failed")
+        except Exception as error:  # pragma: no cover - defensive
+            job.fail(error)
+        finally:
+            # Giu job xong lai mot luc de UI doc duoc ket qua.
+            time.sleep(0.2)
+
+    threading.Thread(target=worker, name="drive-offline", daemon=True).start()
+    return job
 
 
 def download_offline(app_dir, music_dir, album, entry, api_key=""):

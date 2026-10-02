@@ -1,4 +1,5 @@
 import ctypes
+import os
 import threading
 import time
 
@@ -13,15 +14,18 @@ from .drive import (
     FOLDER_MIME,
     DriveEntry,
     DriveError,
+    StreamJob,
     clear_cache as drive_clear_cache,
-    download_offline as drive_download_offline,
-    ensure_stream_file as drive_ensure_stream_file,
+    clear_finished_jobs as drive_clear_finished_jobs,
     extract_folder_id as drive_extract_folder_id,
+    find_offline_copy as drive_find_offline_copy,
     format_bytes as drive_format_bytes,
     get_cached_folder as drive_get_cached,
     list_folder as drive_list_folder,
     list_folder_public as drive_list_public,
     put_cached_folder as drive_put_cache,
+    start_offline_job as drive_start_offline_job,
+    start_stream_job as drive_start_stream_job,
     stream_cache_size as drive_cache_size,
     stream_path as drive_stream_path,
 )
@@ -49,6 +53,7 @@ from .sdl_runtime import (
     SDL_INIT_JOYSTICK,
     SDL_INIT_VIDEO,
     SDL_QUIT,
+    SDLK_ESCAPE,
     SDL_Rect,
     SDL_RENDERER_ACCELERATED,
     SDL_RENDERER_PRESENTVSYNC,
@@ -71,6 +76,7 @@ class MusicPlayerApp:
     ON_ACCENT = (255, 255, 255, 255)
     MUTED = (100, 116, 139, 255)
     SPEC = (249, 115, 22, 255)
+    ACCENT_SOFT = (222, 245, 242, 255)
     GOLD = (255, 195, 60, 255)
     ERROR = (220, 50, 50, 255)
     INTRO_BG = (8, 8, 12, 255)
@@ -125,6 +131,10 @@ class MusicPlayerApp:
         self.link_server = None
         self.link_url = ""
         self.link_qr = None
+        # Tai Drive: job dang chay (de ve %) + dong "da luu" gan header.
+        self.download_job = None
+        self._saved_toast = ("", 0.0)
+        self._jobs_pruned_at = time.monotonic()
 
     def initialize(self):
         self.display.restore()
@@ -430,7 +440,9 @@ class MusicPlayerApp:
                 self._update_sleep_timer()
                 self.player.update()
                 self._update_visuals()
+                self._poll_offline_job()
                 self._maybe_prefetch_drive()
+                self._maybe_prune_jobs()
                 self._poll_drive_link()
                 self._maybe_check_update()
                 if self.player.error:
@@ -1445,13 +1457,27 @@ class MusicPlayerApp:
                 title=filename.rsplit(".", 1)[0],
                 extension=_os.path.splitext(filename)[1].lower(),
             )
-            drive_ensure_stream_file(app_dir, data_dir, entry, api_key or "")
-            get_logger().info("drive prefetched %r", filename)
+            # Dung job dung chung: neu man hinh chinh da bat dau tai file nay
+            # thi prefetch chi theo doi, khong tai trung.
+            job = drive_start_stream_job(app_dir, data_dir, entry, api_key or "")
+            if not job.done:
+                while job.running:
+                    time.sleep(0.3)
+            if job.error:
+                get_logger().info("drive prefetch missed: %s", job.error)
+            else:
+                get_logger().info("drive prefetched %r", filename)
         except Exception as error:
             get_logger().info("drive prefetch missed: %s", error)
 
     def _drive_resolve_track(self, track):
-        """Resolve a drive:// track to a local cached file for SDL_mixer."""
+        """Resolve a drive:// track to a local cached file for SDL_mixer.
+
+        KHONG tai trong thread chinh. Day chay 1 job (dung chung voi prefetch
+        neu dang chay) va CHO trong vong lap co Present + hut event, nen app
+        van song, hien % tai va bam B de huy. Truoc day tai synchronous o day
+        nen app DONG BANG ca luc khong ve khung nao -> "treo cung".
+        """
         path = getattr(track, "path", "")
         if not path.startswith("drive://"):
             return path
@@ -1478,22 +1504,63 @@ class MusicPlayerApp:
             data_dir = self.paths.data_dir
         except Exception as error:
             raise DriveError("paths unavailable: %s" % error)
-        self.status = "Downloading %s..." % entry.title
-        self.status_error = False
+        known = next(
+            (item for item in (getattr(self, "drive_entries", []) or [])
+             if getattr(item, "file_id", "") == file_id),
+            None,
+        )
+        if known is not None:
+            entry = known
+        api_key = self._drive_api_key()
         try:
-            local = drive_ensure_stream_file(app_dir, data_dir, entry, self._drive_api_key())
-        except Exception:
-            # Retry with known size from the current listing when available.
-            known = next(
-                (item for item in (getattr(self, "drive_entries", []) or [])
-                 if getattr(item, "file_id", "") == file_id),
-                None,
-            )
-            if known is None:
-                raise
-            local = drive_ensure_stream_file(app_dir, data_dir, known, self._drive_api_key())
+            job = drive_start_stream_job(app_dir, data_dir, entry, api_key)
+        except Exception as error:
+            raise DriveError(str(error))
+        if job.running:
+            self.status = ""
+            local = self._wait_for_download(job)
+        else:
+            local = job.path
+        if not local:
+            raise DriveError(job.error or "Drive download failed")
         self.status = ""
         return local
+
+    def _wait_for_download(self, job, timeout=240.0):
+        """Cho job xong nhung van Present + hut phim (B de huy)."""
+        event = SDL_Event()
+        started = time.monotonic()
+        while job.running and time.monotonic() - started < timeout:
+            self.download_job = job
+            if self._poll_cancel(event):
+                job.cancel()
+                while job.running:
+                    time.sleep(0.1)
+                self.download_job = None
+                raise DriveError("Download cancelled")
+            self._render()
+            self.runtime.SDL_Delay(16)
+        self.download_job = None
+        if job.running:
+            job.cancel()
+            raise DriveError("Download timed out")
+        return job.path
+
+    def _poll_cancel(self, event):
+        """Hut event, tra True neu nguoi dung bam B/quit giua luc tai."""
+        cancelled = False
+        while self.runtime.SDL_PollEvent(ctypes.byref(event)):
+            if event.type == SDL_QUIT:
+                self.running = False
+                cancelled = True
+            elif event.type == SDL_KEYDOWN and event.key.keysym.sym == SDLK_ESCAPE:
+                cancelled = True
+            elif event.type == SDL_CONTROLLERBUTTONDOWN and event.cbutton.button == 0:
+                cancelled = True
+            elif event.type == SDL_JOYBUTTONDOWN and not self.controllers \
+                    and event.jbutton.button == 0:
+                cancelled = True
+        return cancelled
 
     def _drive_track_for(self, entry):
         album = self._drive_album_label()
@@ -1570,11 +1637,18 @@ class MusicPlayerApp:
             self.status = "Select an audio track to download"
             self.status_error = True
             return False
-        self.status = "Downloading %s..." % row.title
-        self.status_error = False
-        return self._save_entry_offline(row, self._drive_album_label()) is not None
+        return self._save_entry_offline(row, self._drive_album_label())
+
+    def _existing_offline_copy(self, entry):
+        """Bai da co san trong thu vien local chua (ke ca o thu muc khac)."""
+        try:
+            return drive_find_offline_copy(self.paths.music_dir, entry.name,
+                                           getattr(entry, "size", 0))
+        except Exception:
+            return ""
 
     def _save_entry_offline(self, entry, album):
+        """Bat dau luu bai xuong may (nen, co %). Tra ve duong dan neu biet."""
         try:
             app_dir = self.paths.app_dir
             music_dir = self.paths.music_dir
@@ -1582,24 +1656,63 @@ class MusicPlayerApp:
             self.status = "Drive paths unavailable: %s" % error
             self.status_error = True
             return None
+        existing = self._existing_offline_copy(entry)
+        if existing:
+            self._note_saved(entry, existing)
+            self.status = "Already on this device - %s" % self._short_saved_name(entry, existing)
+            self.status_error = False
+            get_logger().info("drive offline already present=%s", existing)
+            return existing
         try:
-            destination = drive_download_offline(
+            job = drive_start_offline_job(
                 app_dir, music_dir, album, entry, self._drive_api_key(),
             )
         except DriveError as error:
             self.status = self._drive_friendly_error("Drive download: %s" % error)
             self.status_error = True
-            get_logger().warning("drive download failed: %s", error)
             return None
-        self.status = "Saved to device%s - find it in LOCAL" % destination[len(music_dir):].lstrip("/\\")
+        self.download_job = job
+        if not job.done:
+            # Job chay nen: vong lap chinh se ve thanh % va tra ve ngay.
+            self.status = ""
+        elif job.path:
+            self._finish_offline_save(entry, job.path)
+        else:
+            self.status = self._drive_friendly_error("Drive download: %s" % job.error)
+            self.status_error = True
+        return job.path or None
+
+    def _short_saved_name(self, entry, destination="", album=""):
+        """Ten ngan de hien tren man hinh (duong dan day du qua dai)."""
+        title = getattr(entry, "title", "") or (destination and os.path.basename(destination))
+        title = str(title).rsplit(".", 1)[0]
+        album = album or getattr(entry, "album", "")
+        if not album:
+            try:
+                album = self._drive_album_label()
+            except Exception:
+                album = ""
+        if album and album != "Drive":
+            return "%s / %s" % (album, title)
+        return title
+
+    def _note_saved(self, entry, destination, album=""):
+        self._saved_toast = (self._short_saved_name(entry, destination, album),
+                             time.monotonic())
+
+    def _finish_offline_save(self, entry, destination):
+        job = getattr(self, "download_job", None)
+        self.download_job = None
+        self._invalidate_saved_rows()
+        self._note_saved(entry, destination, getattr(job, "album", ""))
+        self.status = "Saved: %s" % self._short_saved_name(entry, destination)
         self.status_error = False
         get_logger().info("drive offline saved=%s", destination)
         try:
             from .library import scan_library
-            self.tracks = scan_library(music_dir)
+            self.tracks = scan_library(self.paths.music_dir)
         except Exception as error:
             get_logger().warning("library rescan failed: %s", error)
-        return destination
 
     def _save_current_to_device(self):
         track = self.player.current if getattr(self, "player", None) else None
@@ -1635,6 +1748,32 @@ class MusicPlayerApp:
         self.status = "Downloading %s..." % entry.title
         self.status_error = False
         return self._save_entry_offline(entry, self._drive_album_label()) is not None
+
+    def _maybe_prune_jobs(self):
+        """Bom job Drive da xong de bang nho khong phinh to voi lan phat."""
+        now = time.monotonic()
+        if now - self._jobs_pruned_at < 60.0:
+            return
+        self._jobs_pruned_at = now
+        try:
+            drive_clear_finished_jobs()
+        except Exception as error:
+            get_logger().info("job prune skipped: %s", error)
+
+    def _poll_offline_job(self):
+        """Theo doi job luu offline chay nen; xong thi gan ten ngan vao header."""
+        job = getattr(self, "download_job", None)
+        if job is None or job.kind != "offline":
+            return
+        if job.running:
+            return
+        self.download_job = None
+        entry = getattr(job, "entry", None)
+        if job.error:
+            self.status = self._drive_friendly_error("Drive download: %s" % job.error)
+            self.status_error = True
+            return
+        self._finish_offline_save(entry or DriveEntry("", "", "", 0, False, "", ""), job.path)
 
     def _toggle_favorite(self):
         if getattr(self, "library_mode", "") == "source":
@@ -1746,11 +1885,75 @@ class MusicPlayerApp:
         else:
             self._render_playing()
         self._render_footer()
+        self._render_saved_toast()
+        self._render_download_progress()
         if self.exit_confirmation:
             self._render_exit_confirmation()
         if self.quick_menu:
             self._render_quick_menu()
         self.runtime.SDL_RenderPresent(self.renderer)
+
+    def _toast_width(self):
+        """Bề rộng ô "đã lưu" đang hiện (0 nếu không có), để chừa chỗ cho
+        các mục khác khỏi bị đè lên nhau."""
+        toast = getattr(self, "_saved_toast", None)
+        if not toast:
+            return 0
+        if time.monotonic() - toast[1] > 8.0:
+            return 0
+        label = str(toast[0])
+        if len(label) > 64:
+            label = label[:61] + "..."
+        return self.measure("SAVED  %s" % label, "small")[0] + 28 + 24 + 8
+
+    def _render_saved_toast(self):
+        """Dong 'da luu: <ten ngan>' ngay duoi tieu de (duong dan qua dai)."""
+        toast = getattr(self, "_saved_toast", None)
+        if not toast:
+            return
+        label, at = toast
+        if time.monotonic() - at > 8.0:
+            self._saved_toast = None
+            return
+        label = str(label)
+        if len(label) > 64:
+            label = label[:61] + "..."
+        text = "SAVED  %s" % label
+        font = "small"
+        width = self.measure(text, font)[0] + 28
+        x = max(8, self.width - width - 24)
+        self.fill(x, 72, width, 26, self.PANEL)
+        self.fill(x, 72, 3, 26, self.ACCENT)
+        self.text(text, x + 14, 76, font, self.TEXT)
+
+    def _render_download_progress(self):
+        """Thanh % khi tai tu Drive. Luon co nut B de huy."""
+        job = getattr(self, "download_job", None)
+        if job is None:
+            return
+        percent = int(job.percent * 100)
+        block_w = max(320, self.width - 160)
+        block_h = 74
+        x = (self.width - block_w) // 2
+        y = self.height - 140
+        self.fill(0, 0, self.width, self.height, self.BG)
+        self.fill(x, y, block_w, block_h, self.PANEL)
+        self.fill(x, y, 4, block_h, self.ACCENT)
+        caption = "DOWNLOADING" if job.kind == "offline" else "BUFFERING"
+        self.text(caption, x + 18, y + 8, "small", self.MUTED)
+        self.text("%d%%" % percent, x + block_w - 70, y + 8, "small", self.ACCENT)
+        title = self.ellipsize(job.title or "", block_w - 36, "small")
+        self.text(title, x + 18, y + 26, "small", self.TEXT)
+        bar_x, bar_y = x + 18, y + 50
+        bar_w = block_w - 36
+        self.fill(bar_x, bar_y, bar_w, 10, self.TRACK)
+        if percent > 0:
+            self.fill(bar_x, bar_y, max(10, int(bar_w * job.percent)), 10, self.ACCENT)
+        note = "%s / %s   -   B cancel" % (
+            drive_format_bytes(job.bytes),
+            drive_format_bytes(job.total) if job.total > 0 else "?",
+        )
+        self.text(note, bar_x, bar_y + 16, "small", self.MUTED)
 
     def _version_label(self):
         return "v%s | ID: %s" % (APP_VERSION, self.install_id)
@@ -2121,7 +2324,11 @@ class MusicPlayerApp:
         try:
             crumb = self._drive_path_label()
             self.text(
-                self.ellipsize(str(crumb), self.width - 56, "small"),
+                self.ellipsize(
+                    str(crumb),
+                    max(120, self.width - 56 - self._toast_width()),
+                    "small",
+                ),
                 28, 74, "small", self.MUTED,
             )
         except Exception:
@@ -2178,7 +2385,40 @@ class MusicPlayerApp:
             if spec:
                 spec_width_px = self.measure(spec, "small")[0]
                 self.text(spec, self.width - 28 - spec_width_px, y + 5, "small", spec_color)
+            if row != "__more__" and not getattr(row, "is_folder", False) \
+                    and self._drive_row_is_saved(row):
+                # Bai da co san tren may (ke ca o thu muc khac) -> danh dau
+                # de khong tai trung.
+                badge = "ON DEVICE"
+                badge_w = self.measure(badge, "small")[0] + 16
+                badge_x = 32 + self.measure(
+                    self.ellipsize(title, self.width - 400 - spec_width, "body"), "body",
+                ) + 14
+                if badge_x + badge_w < self.width - 300 - spec_width:
+                    self.fill(badge_x, y + 3, badge_w, 20, self.ACCENT_SOFT)
+                    self.text(badge, badge_x + 8, y + 5, "small", self.ACCENT)
             y += 52
+
+    def _drive_row_is_saved(self, row):
+        """Bai nay da duoc luu vao may chua (quet theo ten + kich thuoc)."""
+        cache = getattr(self, "_saved_rows", None)
+        if cache is None:
+            cache = {}
+            self._saved_rows = cache
+        key = (getattr(row, "file_id", ""), getattr(row, "size", 0))
+        if key in cache:
+            return cache[key]
+        value = bool(self._existing_offline_copy(row))
+        cache[key] = value
+        return value
+
+    def _invalidate_saved_rows(self):
+        self._saved_rows = {}
+        try:
+            from .drive import refresh_offline_index
+            refresh_offline_index()
+        except Exception:
+            pass
 
     def _fit_title(self, title, max_width):
         for font in ("title", "body", "small"):

@@ -1251,6 +1251,13 @@ class TruepodStyleTests(unittest.TestCase):
             app.player.current = mock.Mock(path="drive://FILEID1234567890/song.mp3", extension=".mp3")
             self.assertIn("MP3", app._audio_status_line())
 
+    def _finished_offline_job(path, album="Drive"):
+        from musicplayer.drive import StreamJob
+        job = StreamJob("offline:%s" % path, "song", 1024, "offline", album=album)
+        job.done = True
+        job.path = path
+        return job
+
     def test_y_saves_current_drive_track(self):
         import musicplayer.ui as ui_module
         app = MusicPlayerApp.__new__(MusicPlayerApp)
@@ -1269,11 +1276,17 @@ class TruepodStyleTests(unittest.TestCase):
         app.tracks = []
         app.status = ""
         app.status_error = True
-        with mock.patch.object(ui_module, "drive_download_offline", return_value="/music/Drive/Drive/song.flac"), \
+        with mock.patch.object(ui_module, "drive_find_offline_copy", return_value=""), \
+                mock.patch.object(
+                    ui_module, "drive_start_offline_job",
+                    return_value=self._finished_offline_job("/music/Drive/Drive/song.flac"),
+                ), \
                 mock.patch("musicplayer.library.scan_library", return_value=["t"]):
             app._handle("y")
-        self.assertIn("Saved to device", app.status)
+        self.assertIn("Saved", app.status)
+        self.assertIn("song", app.status)
         self.assertEqual(app.tracks, ["t"])
+        self.assertTrue(app._saved_toast[0])
 
     def test_y_reports_local_track_already_saved(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
@@ -2024,15 +2037,21 @@ class DrivePrefetchTests(unittest.TestCase):
         thread.assert_not_called()
 
     def test_prefetch_worker_downloads_quietly(self):
+        """Prefetch dung job chung nen, khong tai trong thread UI."""
+        from musicplayer.drive import StreamJob
         track = mock.Mock(path="drive://F9/song.flac")
-        with mock.patch("musicplayer.ui.drive_ensure_stream_file") as ensure:
+        finished = StreamJob("F9", "song", 0, "stream")
+        finished.done = True
+        finished.path = "/data/drive-cache/F9.flac"
+        with mock.patch("musicplayer.ui.drive_start_stream_job",
+                        return_value=finished) as start:
             MusicPlayerApp._prefetch_drive_track(track, "", "/app", "/data")
-        entry = ensure.call_args.args[2]
+        entry = start.call_args.args[2]
         self.assertEqual(entry.file_id, "F9")
         self.assertEqual(entry.extension, ".flac")
-        with mock.patch("musicplayer.ui.drive_ensure_stream_file") as ensure:
+        with mock.patch("musicplayer.ui.drive_start_stream_job") as start:
             MusicPlayerApp._prefetch_drive_track(mock.Mock(path="/m/s.mp3"), "", "/a", "/d")
-        ensure.assert_not_called()
+        start.assert_not_called()
 
 
 class QrCodeTests(unittest.TestCase):
