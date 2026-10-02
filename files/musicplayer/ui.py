@@ -24,6 +24,7 @@ from .drive import (
     stream_cache_size as drive_cache_size,
     stream_path as drive_stream_path,
 )
+from .drivelink import DriveLinkServer
 from .input import InputState
 from .identity import installation_id
 from .audio_format import format_spec
@@ -120,6 +121,9 @@ class MusicPlayerApp:
         self.drive_loaded = False
         self._prefetch_base = None
         self._prefetch_target = -1
+        self.link_server = None
+        self.link_url = ""
+        self.link_qr = None
 
     def initialize(self):
         self.display.restore()
@@ -364,6 +368,10 @@ class MusicPlayerApp:
         threading.Thread(target=worker, name="diagnostic-upload", daemon=True).start()
 
     def cleanup(self):
+        try:
+            self._close_add_drive(silent=True)
+        except Exception:
+            pass
         if self.leds is not None:
             try:
                 self.leds.restore_engine()
@@ -421,6 +429,7 @@ class MusicPlayerApp:
                 self.player.update()
                 self._update_visuals()
                 self._maybe_prefetch_drive()
+                self._poll_drive_link()
                 self._maybe_check_update()
                 if self.player.error:
                     self.status = self.player.error
@@ -460,9 +469,15 @@ class MusicPlayerApp:
             self.quick_menu_page = "main"
             return
         if action == "start":
-            self.screen = "playing" if self.screen == "library" else "library"
+            if self.screen == "addrive":
+                self._close_add_drive()
+            else:
+                self.screen = "playing" if self.screen == "library" else "library"
             return
         if action == "b":
+            if self.screen == "addrive":
+                self._close_add_drive()
+                return
             if self.screen == "lyrics":
                 self.screen = "playing"
             elif self.screen == "playing":
@@ -511,7 +526,7 @@ class MusicPlayerApp:
                 if rows:
                     self.selection = min(self.selection, len(rows) - 1)
                     self._drive_download_row(rows[self.selection])
-            else:
+            elif self.screen in ("library", "playing"):
                 self._toggle_favorite()
             return
         if action == "y":
@@ -522,7 +537,7 @@ class MusicPlayerApp:
                     self._open_drive()
                 else:
                     self._cycle_library_mode()
-            else:
+            elif self.screen in ("playing", "lyrics"):
                 self._save_current_to_device()
             return
         if self.screen == "library":
@@ -530,14 +545,16 @@ class MusicPlayerApp:
                 if action in ("up", "stick_up"):
                     self.selection = max(0, self.selection - 1)
                 elif action in ("down", "stick_down"):
-                    self.selection = min(1, self.selection + 1)
+                    self.selection = min(2, self.selection + 1)
                 elif action == "left":
                     self.selection = 0
                 elif action == "right":
-                    self.selection = 1
+                    self.selection = 2
                 elif action == "a":
                     if self.selection == 1:
                         self._open_drive()
+                    elif self.selection == 2:
+                        self._open_add_drive()
                     else:
                         self.library_mode = "all"
                         self.selection = 0
@@ -583,6 +600,9 @@ class MusicPlayerApp:
                     self.player.tracks = list(entries)
                     if self.player.play(self.selection):
                         self.screen = "playing"
+        elif self.screen == "addrive":
+            if action == "a":
+                self._open_add_drive()
         else:
             if action == "a":
                 paused = self.player.toggle_pause()
@@ -1035,6 +1055,84 @@ class MusicPlayerApp:
         if not getattr(self, "drive_loaded", False):
             self._drive_refresh()
 
+    def _open_add_drive(self):
+        self._close_add_drive(silent=True)
+        self.screen = "addrive"
+        self.selection = 0
+        self.scroll = 0
+        try:
+            server = DriveLinkServer(self.paths)
+            url = server.start()
+        except Exception as error:
+            get_logger().warning("drive link server failed: %s", error)
+            self.link_server = None
+            self.link_url = ""
+            self.link_qr = None
+            self.status = "Link server failed - check Wi-Fi, press A to retry"
+            self.status_error = True
+            return
+        self.link_server = server
+        self.link_url = url
+        try:
+            from .qrcode import encode as qr_encode
+            self.link_qr = qr_encode(url, ecc="M") if url else None
+        except Exception as error:
+            get_logger().warning("QR encode failed: %s", error)
+            self.link_qr = None
+        if url:
+            self.status = ""
+            get_logger().info("add-drive screen ready url=%s", url)
+        else:
+            self.status = "Link server failed - check Wi-Fi, press A to retry"
+            self.status_error = True
+
+    def _close_add_drive(self, silent=False):
+        server, self.link_server = getattr(self, "link_server", None), None
+        if server is not None:
+            try:
+                server.stop()
+            except Exception:
+                pass
+        self.link_qr = None
+        self.link_url = ""
+        if not silent:
+            self.screen = "library"
+            self._open_source()
+
+    def _poll_drive_link(self):
+        server = getattr(self, "link_server", None)
+        if server is None:
+            return
+        try:
+            result = server.poll()
+        except Exception:
+            return
+        if not result:
+            return
+        if not result.get("ok"):
+            self.status = result.get("message", "Drive link failed")
+            self.status_error = True
+            return
+        try:
+            folder_id = str(self.settings.get("drive_folder_id") or "")
+        except Exception:
+            folder_id = ""
+        folder_id = drive_extract_folder_id(folder_id) if folder_id else DEFAULT_FOLDER_ID
+        try:
+            self.settings.set("drive_folder_id", folder_id)
+            self.settings.save()
+        except Exception as error:
+            get_logger().warning("cannot save drive folder: %s", error)
+        self.drive_stack = []
+        self.drive_entries = []
+        self.drive_page_token = ""
+        self.drive_loaded = False
+        self._prefetch_base = None
+        self._prefetch_target = -1
+        self.status = result.get("message", "Drive link saved")
+        self.status_error = False
+        self._close_add_drive()
+
     def _cycle_library_mode(self):
         modes = ("all", "favorites", "playlists", "favorite_playlists")
         current = self.playlist_parent_mode if self.library_mode == "playlist_tracks" else self.library_mode
@@ -1422,7 +1520,7 @@ class MusicPlayerApp:
         if getattr(self, "library_mode", "") == "drive":
             count = len(self._drive_rows())
         elif getattr(self, "library_mode", "") == "source":
-            count = 2
+            count = 3
         else:
             count = len(self._library_entries())
         if count:
@@ -1491,6 +1589,8 @@ class MusicPlayerApp:
         self.text(subtitle, self.width - 28 - subtitle_width, 23, "small", self.MUTED)
         if self.screen == "library":
             self._render_library()
+        elif self.screen == "addrive":
+            self._render_addrive()
         elif self.screen == "lyrics":
             self._render_lyrics()
         else:
@@ -1661,6 +1761,7 @@ class MusicPlayerApp:
         rows = [
             ("LOCAL", "%d tracks on this device" % len(getattr(self, "tracks", []) or [])),
             ("DRIVE", "Google Drive (online)"),
+            ("+ Add Drive", "Link your own Drive folder"),
         ]
         try:
             self.text(
@@ -1680,6 +1781,50 @@ class MusicPlayerApp:
             detail_width = self.measure(detail, "small")[0]
             self.text(detail, self.width - 32 - detail_width, y + 8, "small", dim_color)
             y += 52
+
+    def _render_addrive(self):
+        center_x = self.width // 2
+        try:
+            self.text("Scan with your phone", center_x, 78, "small", self.MUTED, center=True)
+        except Exception:
+            pass
+        qr = getattr(self, "link_qr", None)
+        url = getattr(self, "link_url", "") or ""
+        size = int(getattr(qr, "size", 0) or 0)
+        if qr is not None and size > 0:
+            box = min(220, max(120, self.height - 340))
+            cell = max(2, box // (size + 8))
+            side = cell * (size + 8)
+            left = center_x - side // 2
+            top = 104
+            self.fill(left, top, side, side, self.ON_ACCENT)
+            pad = cell * 4
+            for y in range(size):
+                for x in range(size):
+                    if qr.get(x, y):
+                        self.fill(left + pad + x * cell, top + pad + y * cell, cell, cell, self.TEXT)
+            text_top = top + side + 8
+        else:
+            text_top = 120
+        try:
+            self.text(
+                self.ellipsize(url or "Starting link server...", self.width - 60, "small"),
+                center_x, text_top, "small", self.ACCENT, center=True,
+            )
+            lines = (
+                "1. Phone joins the same Wi-Fi as this player",
+                "2. Scan the code or open the address above",
+                "3. Paste your Drive folder link, press Save",
+            )
+            line_y = text_top + 24
+            for line in lines:
+                self.text(
+                    self.ellipsize(line, self.width - 60, "small"),
+                    center_x, line_y, "small", self.MUTED, center=True,
+                )
+                line_y += 22
+        except Exception:
+            pass
 
     def _render_drive(self):
         rows = self._drive_rows()
@@ -1993,6 +2138,8 @@ class MusicPlayerApp:
                 hint = "A OPEN  Y DRIVE"
             else:
                 hint = "A OPEN/PLAY  X FAVORITE  Y VIEW"
+        elif self.screen == "addrive":
+            hint = "A RETRY  B BACK"
         elif self.screen == "lyrics":
             hint = "A PAUSE  X TRANSLATION  Y SAVE  SELECT MENU"
         else:
@@ -2021,6 +2168,8 @@ class MusicPlayerApp:
             return "NOW PLAYING"
         if self.screen == "lyrics":
             return "LYRICS"
+        if self.screen == "addrive":
+            return "ADD DRIVE"
         return {
             "all": "ALL SONGS",
             "favorites": "FAVORITE SONGS",

@@ -362,6 +362,22 @@ def clear_cache(data_dir):
     shutil.rmtree(stream_dir, ignore_errors=True)
 
 
+def forget_folder(data_dir, folder_id):
+    """Drop cached listing pages for one folder (keeps stream files)."""
+    if not folder_id:
+        return 0
+    data = load_cache(data_dir)
+    doomed = [
+        key for key in data
+        if key == folder_id or key.startswith(folder_id + "|")
+    ]
+    for key in doomed:
+        data.pop(key, None)
+    if doomed:
+        save_cache(data_dir, data)
+    return len(doomed)
+
+
 def stream_path(data_dir, file_id, extension):
     directory = os.path.join(data_dir, STREAM_SUBDIR)
     os.makedirs(directory, exist_ok=True)

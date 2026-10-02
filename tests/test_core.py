@@ -30,6 +30,7 @@ from musicplayer.updater import apply_update, update_available, validate_manifes
 from musicplayer.ui import MusicPlayerApp
 from musicplayer.input import InputState
 from musicplayer import drive as drive_module
+from musicplayer import qrcode as qrcode_module
 from musicplayer.drive import (
     DEFAULT_FOLDER_ID,
     DriveError,
@@ -1987,6 +1988,263 @@ class DrivePrefetchTests(unittest.TestCase):
         with mock.patch("musicplayer.ui.drive_ensure_stream_file") as ensure:
             MusicPlayerApp._prefetch_drive_track(mock.Mock(path="/m/s.mp3"), "", "/a", "/d")
         ensure.assert_not_called()
+
+
+class QrCodeTests(unittest.TestCase):
+    GOLDEN_QR_URL = 'http://192.168.1.10:8080/'
+    GOLDEN_QR_ROWS = (
+        '1111111001000100101111111',
+        '1000001010101000001000001',
+        '1011101011001010101011101',
+        '1011101011010111101011101',
+        '1011101001110010001011101',
+        '1000001000010000101000001',
+        '1111111010101010101111111',
+        '0000000010001000000000000',
+        '1000001010000101111001110',
+        '1011100011010101110011110',
+        '0011011110011101001101011',
+        '0100110110010001100011001',
+        '1001111001011010111000001',
+        '1011010010100111000000010',
+        '1000011000011001010101011',
+        '1010100010010010100010101',
+        '1011101101011100111110100',
+        '0000000000101011100010100',
+        '1111111000110110101011001',
+        '1000001001010000100010011',
+        '1011101001011101111111100',
+        '1011101001111100001101011',
+        '1011101000001000010000101',
+        '1000001000101001101110001',
+        '1111111011110011101001001',
+    )
+
+    def test_golden_matrix_for_lan_url(self):
+        qr = qrcode_module.encode(self.GOLDEN_QR_URL, ecc="M")
+        self.assertEqual(qr.size, len(self.GOLDEN_QR_ROWS))
+        for y, row in enumerate(self.GOLDEN_QR_ROWS):
+            self.assertEqual(
+                "".join("1" if qr.get(x, y) else "0" for x in range(qr.size)),
+                row,
+            )
+
+    def test_finder_and_size_structure(self):
+        qr = qrcode_module.encode("A", ecc="M")
+        self.assertEqual(qr.size, 21)
+        for cx, cy in ((3, 3), (17, 3), (3, 17)):
+            self.assertTrue(qr.get(cx, cy))
+        self.assertTrue(qr.get(0, 0))
+        self.assertFalse(qr.get(7, 0))
+        long_text = "x" * 100
+        grown = qrcode_module.encode(long_text, ecc="M")
+        self.assertGreater(grown.size, qr.size)
+        self.assertEqual(grown.size, 21 + (6 - 1) * 4)
+
+    def test_rejects_non_ascii_and_too_long(self):
+        with self.assertRaises(ValueError):
+            qrcode_module.encode("café", ecc="M")
+        with self.assertRaises(ValueError):
+            qrcode_module.encode("x" * 300, ecc="H")
+        with self.assertRaises(ValueError):
+            qrcode_module.encode("ok", ecc="Z")
+
+    def test_encoding_is_deterministic(self):
+        first = qrcode_module.encode("http:// trimui/", ecc="M")
+        second = qrcode_module.encode("http:// trimui/", ecc="M")
+        self.assertEqual(
+            [first.get(x, y) for y in range(first.size) for x in range(first.size)],
+            [second.get(x, y) for y in range(second.size) for x in range(second.size)],
+        )
+
+
+class DriveLinkTests(unittest.TestCase):
+    def test_submit_rejects_bad_links(self):
+        import musicplayer.drivelink as links
+        paths = mock.Mock(app_dir="/app", data_dir="/data", settings_file="/s.json")
+        ok, message, count = links.submit_drive_link(paths, "not a link")
+        self.assertFalse(ok)
+        self.assertEqual(count, 0)
+        ok, _message, _count = links.submit_drive_link(paths, "x" * 501)
+        self.assertFalse(ok)
+
+    def test_submit_saves_and_syncs_listing(self):
+        import musicplayer.drivelink as links
+        with tempfile.TemporaryDirectory() as root:
+            settings_file = os.path.join(root, "settings.json")
+            paths = mock.Mock(app_dir=root, data_dir=root, settings_file=settings_file)
+            entries = [mock.Mock(file_id="F1", is_folder=True, name="Album",
+                                 mime_type="", size=0, title="Album", extension="")]
+            with mock.patch.object(links, "list_folder_public", return_value=(entries, "")), \
+                    mock.patch.object(links, "put_cached_folder") as put, \
+                    mock.patch.object(links, "forget_folder") as forget:
+                ok, message, count = links.submit_drive_link(
+                    paths, "https://drive.google.com/drive/folders/AAAABBBBCCCCDDDDe1")
+            self.assertTrue(ok)
+            self.assertEqual(count, 1)
+            self.assertIn("synced", message)
+            with open(settings_file, encoding="utf-8") as handle:
+                saved = json.load(handle)
+            self.assertEqual(saved["drive_folder_id"], "AAAABBBBCCCCDDDDe1")
+            put.assert_called_once()
+
+    def test_submit_rejects_unreachable_share(self):
+        import musicplayer.drivelink as links
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(
+                app_dir=root, data_dir=root,
+                settings_file=os.path.join(root, "settings.json"))
+            with mock.patch.object(
+                    links, "list_folder_public", side_effect=Exception("offline")):
+                ok, message, count = links.submit_drive_link(
+                    paths, "https://drive.google.com/drive/folders/AAAABBBBCCCCDDDDe1")
+            self.assertFalse(ok)
+            self.assertEqual(count, 0)
+            self.assertIn("check", message)
+
+    def test_web_form_and_save_roundtrip(self):
+        import urllib.request
+        import musicplayer.drivelink as links
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(
+                app_dir=root, data_dir=root,
+                settings_file=os.path.join(root, "settings.json"))
+            server = links.DriveLinkServer(paths)
+            with mock.patch.object(links, "PORT", 0):
+                server.start()
+            try:
+                port = server.httpd.server_address[1]
+                base = "http://127.0.0.1:%d/" % port
+                with urllib.request.urlopen(base, timeout=10) as response:
+                    form = response.read().decode("utf-8")
+                self.assertIn("drive_url", form)
+                bad = urllib.parse.urlencode({"drive_url": "hello"}).encode("ascii")
+                request = urllib.request.Request(base + "save", data=bad)
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    page = response.read().decode("utf-8")
+                self.assertIn("Not a Drive", page)
+                result = server.poll()
+                self.assertFalse(result["ok"])
+                self.assertIsNone(server.poll())
+            finally:
+                server.stop()
+
+    def test_device_ips_returns_list(self):
+        import musicplayer.drivelink as links
+        ips = links.device_ips()
+        self.assertIsInstance(ips, list)
+        for ip in ips:
+            self.assertRegex(ip, r"^\d+\.\d+\.\d+\.\d+$")
+
+    def test_forget_folder_drops_one_share(self):
+        entries, _token = parse_list_response({
+            "files": [
+                {"id": "a1", "name": "song.mp3", "mimeType": "audio/mpeg", "size": "10"},
+            ],
+        })
+        with tempfile.TemporaryDirectory() as root:
+            drive_module.put_cached_folder(root, "F1", entries, "T1")
+            drive_module.put_cached_folder(root, "F2", entries, "")
+            self.assertEqual(drive_module.forget_folder(root, "F1"), 1)
+            self.assertIsNone(drive_module.get_cached_folder(root, "F1"))
+            self.assertIsNotNone(drive_module.get_cached_folder(root, "F2"))
+
+
+class AddDriveScreenTests(unittest.TestCase):
+    def _app(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.screen = "library"
+        app.library_mode = "source"
+        app.tracks = []
+        app.selection = 2
+        app.scroll = 0
+        app.update_busy = False
+        app.update_manifest = None
+        app.quick_menu = False
+        app.exit_confirmation = False
+        app.status = ""
+        app.status_error = False
+        app.paths = mock.Mock(app_dir="/app", data_dir="/data", music_dir="/m",
+                              settings_file="/s.json")
+        values = {"drive_folder_id": DEFAULT_FOLDER_ID, "drive_api_key": ""}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.drive_stack = []
+        app.drive_entries = []
+        app.drive_page_token = ""
+        app.drive_busy = False
+        app.drive_loaded = False
+        app._prefetch_base = None
+        app._prefetch_target = -1
+        app.link_server = None
+        app.link_url = ""
+        app.link_qr = None
+        return app
+
+    def test_source_add_row_opens_link_screen(self):
+        import musicplayer.ui as ui_module
+        app = self._app()
+        server = mock.Mock()
+        server.start.return_value = "http://1.2.3.4:8080/"
+        with mock.patch.object(ui_module, "DriveLinkServer", return_value=server), \
+                mock.patch("musicplayer.qrcode.encode") as qr_encode:
+            app._handle("a")
+        self.assertEqual(app.screen, "addrive")
+        self.assertEqual(app._screen_title(), "ADD DRIVE")
+        self.assertEqual(app.link_url, "http://1.2.3.4:8080/")
+        qr_encode.assert_called_once_with("http://1.2.3.4:8080/", ecc="M")
+
+    def test_back_closes_server_and_returns(self):
+        app = self._app()
+        app.screen = "addrive"
+        server = mock.Mock()
+        app.link_server = server
+        app._handle("b")
+        server.stop.assert_called_once()
+        self.assertEqual(app.screen, "library")
+        self.assertEqual(app.library_mode, "source")
+
+    def test_poll_applies_submitted_link(self):
+        app = self._app()
+        app.screen = "addrive"
+        server = mock.Mock()
+        server.poll.return_value = {"ok": True, "message": "Saved! 3 items synced"}
+        app.link_server = server
+        app._poll_drive_link()
+        self.assertEqual(app.settings.get("drive_folder_id"), DEFAULT_FOLDER_ID)
+        app.settings.save.assert_called()
+        self.assertEqual(app.screen, "library")
+        self.assertIn("synced", app.status)
+
+    def test_poll_reports_failed_link(self):
+        app = self._app()
+        app.screen = "addrive"
+        server = mock.Mock()
+        server.poll.return_value = {"ok": False, "message": "Not a Drive folder link"}
+        app.link_server = server
+        app._poll_drive_link()
+        self.assertTrue(app.status_error)
+        self.assertEqual(app.screen, "addrive")
+
+    def test_addrive_renders_qr_and_url(self):
+        app = self._app()
+        app.width = 640
+        app.height = 480
+        app.link_url = "http://1.2.3.4:8080/"
+        matrix = [[(x + y) % 2 == 0 for x in range(25)] for y in range(25)]
+        app.link_qr = mock.Mock(size=25, get=lambda x, y: matrix[y][x])
+        fills = []
+        texts = []
+        app.fill = lambda *args: fills.append(args)
+        app.text = lambda *args, **kwargs: texts.append(args[0])
+        app.measure = lambda *args, **kwargs: (10, 10)
+        app.ellipsize = lambda text, *args, **kwargs: text
+        app._render_addrive()
+        self.assertTrue(fills)
+        blob = "\n".join(str(line) for line in texts)
+        self.assertIn("http://1.2.3.4:8080/", blob)
+        self.assertIn("same Wi-Fi", blob)
 
 
 if __name__ == "__main__":
