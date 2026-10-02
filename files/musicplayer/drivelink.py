@@ -113,7 +113,7 @@ def submit_drive_link(paths, raw_url):
         slots = normalize_slots(settings.get("drive_slots"), settings.get("drive_folder_id"))
         previous = ""
         try:
-            previous = str(slots[int(settings.get("drive_slot", 0))]["folder"])
+            previous = str(slots[int(settings.get("drive_slot"))]["folder"])
         except (TypeError, ValueError, IndexError, KeyError):
             pass
         slot_index = find_slot(slots, folder_id)

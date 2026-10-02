@@ -1,8 +1,8 @@
 {
-  "version": "1.15.1",
+  "version": "1.16.0",
   "app": "trimui-music-player",
-  "release_ref": "v1.15.1",
-  "base_url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.15.1/files",
+  "release_ref": "v1.16.0",
+  "base_url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.16.0/files",
   "files": [
     {
       "path": "THIRD_PARTY_NOTICES.txt",
@@ -36,7 +36,7 @@
     },
     {
       "path": "musicplayer/__init__.py",
-      "sha256": "f8d9bb3c2c38fbf1533ca4c90ec915fa075e0d5a161c5b5fe8aafc4e406e9ae0",
+      "sha256": "9ad12c7939043ac6aeb0ed75d6c74266644fc1eeaed2a7fa7261520af05c71b0",
       "size": 49
     },
     {
@@ -81,8 +81,8 @@
     },
     {
       "path": "musicplayer/drivelink.py",
-      "sha256": "71926729945c951b696746af86c65d8cd3adb26c2a14f8cd0c88af422c02117f",
-      "size": 10910
+      "sha256": "69632763982e2e60b9932227428ec621085ee0a6ecfee8c766f454f9fac7f6bf",
+      "size": 10907
     },
     {
       "path": "musicplayer/equalizer.py",
@@ -156,8 +156,8 @@
     },
     {
       "path": "musicplayer/ui.py",
-      "sha256": "7194201e7e09114f2eeaaf9b8ee1db19b7650860dd4238eb9e9a579bf7fbaad3",
-      "size": 94955
+      "sha256": "7d957314575dbd25c62422460c2c175990cfa8904a150e0eb3d855dbf2c56620",
+      "size": 96243
     },
     {
       "path": "musicplayer/updater.py",
@@ -173,25 +173,25 @@
       "path": "certs/cacert.pem",
       "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9",
       "size": 188900,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.15.1/assets/cacert.pem"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.16.0/assets/cacert.pem"
     },
     {
       "path": "config.json",
       "sha256": "88ca226e4119a5b356275820b836bf84c4c8e188dcc1383201d174ca0447fe5e",
       "size": 102,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.15.1/assets/config.json"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.16.0/assets/config.json"
     },
     {
       "path": "icon.png",
       "sha256": "df4f2ee9aec763c26d1262a39b4d395eeada0d1b1fdf33d1ef9339d28a36a723",
       "size": 10989,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.15.1/assets/icon.png"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.16.0/assets/icon.png"
     },
     {
       "path": "LICENSE.txt",
       "sha256": "c5932e63588c9fc195c782acb2cd69b196f501d3b9189c7e21e538ad1c58c835",
       "size": 1074,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.15.1/LICENSE"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.16.0/LICENSE"
     }
   ]
 }

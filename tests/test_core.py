@@ -1718,6 +1718,7 @@ class DriveTests(unittest.TestCase):
         self.assertIn("drive_refresh", ids)
         self.assertIn("drive_download", ids)
         self.assertIn("drive_clear", ids)
+        self.assertNotIn("drive_slot", ids)
 
     def test_local_view_cycle_stays_local(self):
         app = MusicPlayerApp.__new__(MusicPlayerApp)
@@ -2360,7 +2361,7 @@ class DriveSlotTests(unittest.TestCase):
                 os.path.relpath(nested, music),
                 os.path.join("Drive", "Drive 2", "Ballads", "01 Song.flac"))
 
-    def test_cycle_drive_slot_switches_folder(self):
+    def test_enter_drive_slot_syncs_active_folder(self):
         ida, idb = "AAAABBBBCCCCDDDDe1", "AAAABBBBCCCCDDDDe2"
         app = MusicPlayerApp.__new__(MusicPlayerApp)
         values = {"drive_folder_id": ida, "drive_api_key": "",
@@ -2373,18 +2374,109 @@ class DriveSlotTests(unittest.TestCase):
         app.drive_stack = []
         app.drive_entries = []
         app.drive_page_token = ""
-        app.drive_loaded = True
+        app.drive_loaded = False
         app.selection = 0
         app.scroll = 0
         app.status = ""
         app.status_error = False
         with mock.patch.object(app, "_drive_refresh"):
-            name = app._cycle_drive_slot(1)
-        self.assertEqual(name, "Drive 2")
+            self.assertTrue(app._enter_drive_slot(1))
         self.assertEqual(values["drive_slot"], 1)
         self.assertEqual(values["drive_folder_id"], idb)
+        self.assertEqual(app.drive_stack, [(idb, "Drive 2")])
         self.assertEqual(app._drive_folder_id(), idb)
         self.assertEqual(app._drive_slot_name(), "Drive 2")
+        self.assertEqual(app._drive_path_label(), "DRIVE 2")
+
+    def test_drive_root_lists_slots_without_network(self):
+        ida, idb = "AAAABBBBCCCCDDDDe1", "AAAABBBBCCCCDDDDe2"
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"drive_folder_id": ida, "drive_api_key": "",
+                  "drive_slots": [{"name": "Drive 1", "folder": ida},
+                                  {"name": "Drive 2", "folder": idb}],
+                  "drive_slot": 0}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.drive_stack = []
+        app.drive_entries = []
+        app.drive_page_token = ""
+        app.drive_busy = False
+        app.drive_loaded = False
+        app.selection = 0
+        app.status = ""
+        app.status_error = False
+        with mock.patch("musicplayer.ui.drive_list_public") as public:
+            app._drive_refresh()
+        public.assert_not_called()
+        self.assertTrue(app.drive_loaded)
+        rows = app._drive_rows()
+        self.assertEqual([row.file_id for row in rows], ["slot:0", "slot:1"])
+        self.assertEqual([row.title for row in rows], ["Drive 1", "Drive 2"])
+        with mock.patch.object(app, "_enter_drive_slot", return_value=True) as enter:
+            app._drive_play_row(rows[1])
+        enter.assert_called_once_with(1)
+
+    def test_single_slot_browses_folder_directly(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"drive_folder_id": DEFAULT_FOLDER_ID, "drive_api_key": "",
+                  "drive_slots": [{"name": "Drive 1", "folder": DEFAULT_FOLDER_ID}],
+                  "drive_slot": 0}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.drive_stack = []
+        app.drive_entries = []
+        app.drive_page_token = ""
+        app.drive_busy = False
+        app.drive_loaded = False
+        app.selection = 0
+        app.status = ""
+        app.status_error = False
+        fake = [mock.Mock(file_id="F1", is_folder=True)]
+        with mock.patch("musicplayer.ui.drive_list_public", return_value=(fake, "")) as public, \
+                mock.patch("musicplayer.ui.drive_put_cache"):
+            app.paths = mock.Mock(app_dir="/app", data_dir="/nope")
+            app._drive_refresh()
+        public.assert_called_once_with("/app", DEFAULT_FOLDER_ID)
+        self.assertEqual(app.drive_entries, fake)
+
+    def test_open_drive_reloads_settings_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings_file = os.path.join(root, "settings.json")
+            stale = Settings(settings_file)
+            stale.set("drive_folder_id", "AAAABBBBCCCCDDDDe0")
+            stale.save()
+            app = MusicPlayerApp.__new__(MusicPlayerApp)
+            app.settings = Settings(settings_file).load()
+            self.assertEqual(app.settings.get("drive_folder_id"), "AAAABBBBCCCCDDDDe0")
+            fresh = Settings(settings_file).load()
+            fresh.set("drive_folder_id", DEFAULT_FOLDER_ID)
+            fresh.save()
+            app.library_mode = "source"
+            app.screen = "library"
+            app.selection = 5
+            app.scroll = 2
+            app.drive_loaded = True
+            with mock.patch.object(app, "_drive_refresh") as refresh:
+                app._open_drive()
+            refresh.assert_not_called()
+            self.assertEqual(app.settings.get("drive_folder_id"), DEFAULT_FOLDER_ID)
+            self.assertEqual(app.library_mode, "drive")
+
+
+    def test_slot_index_reads_real_settings_object(self):
+        ida, idb = "AAAABBBBCCCCDDDDe1", "AAAABBBBCCCCDDDDe2"
+        with tempfile.TemporaryDirectory() as root:
+            settings = Settings(os.path.join(root, "settings.json"))
+            settings.set("drive_slots", [{"name": "Drive 1", "folder": ida},
+                                         {"name": "Drive 2", "folder": idb}])
+            settings.set("drive_slot", 1)
+            settings.set("drive_folder_id", idb)
+            settings.save()
+            app = MusicPlayerApp.__new__(MusicPlayerApp)
+            app.settings = Settings(os.path.join(root, "settings.json")).load()
+            self.assertEqual(app._drive_slot_index(), 1)
+            self.assertEqual(app._drive_folder_id(), idb)
+            self.assertEqual(app._drive_slot_name(), "Drive 2")
 
 
 class LogPruneTests(unittest.TestCase):
