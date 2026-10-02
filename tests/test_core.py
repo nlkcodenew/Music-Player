@@ -326,8 +326,11 @@ class ReporterTests(unittest.TestCase):
 class UpdaterTests(unittest.TestCase):
     def test_rejects_path_traversal_and_protected_files(self):
         base = {"version": "9.0", "base_url": "https://example.test/files"}
-        for path in ("../escape", "/absolute", "secrets.json", "data/settings.json"):
+        for path in ("../escape", "/absolute", "secrets.json", "data/settings.json",
+                     "settings.json", "data/drive-cache.json", "drive-cache.json"):
             manifest = dict(base, files=[{"path": path, "sha256": "0" * 64, "size": 1}])
+            with self.assertRaises(ValueError):
+                validate_manifest(manifest)
         with self.assertRaises(ValueError):
             validate_manifest(manifest)
 
@@ -2400,6 +2403,64 @@ class LogPruneTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(main_log))
             self.assertFalse(os.path.exists(main_log + ".1"))
             self.assertEqual(log_backup_bytes(paths), 0)
+
+
+class DrivePrivacyTests(unittest.TestCase):
+    def test_release_tools_exclude_drive_user_files(self):
+        import sys as _sys
+        sys_path = os.path.join(ROOT, "tools")
+        if sys_path not in _sys.path:
+            _sys.path.insert(0, sys_path)
+        import make_release
+        import verify_release
+        for excluded in ("settings.json", "drive-cache.json"):
+            self.assertIn(excluded, make_release.EXCLUDED)
+            self.assertIn(excluded, verify_release.EXCLUDED)
+        from musicplayer.updater import PROTECTED
+        for protected in ("settings.json", "drive-cache.json"):
+            self.assertIn(protected, PROTECTED)
+
+    def test_drive_ids_never_leave_the_device_in_reports(self):
+        from musicplayer.reporter import _drive_secrets, _submit
+        folder = "AAAABBBBCCCCDDDDe9"
+        with tempfile.TemporaryDirectory() as root:
+            settings_file = os.path.join(root, "settings.json")
+            settings = Settings(settings_file)
+            settings.set("drive_folder_id", folder)
+            settings.set("drive_slots", [{"name": "Drive 2", "folder": folder}])
+            settings.save()
+            paths = mock.Mock(
+                app_dir=root, sdcard_path=root, music_dir=os.path.join(root, "Music"),
+                data_dir=root, os_name="stock", settings_file=settings_file)
+            self.assertIn(folder, _drive_secrets(paths))
+            item = {"reason": "drive_link_failed", "detail": "share unreachable",
+                    "fingerprint": "f" * 64, "session_log": "drive link updated folder=%s" % folder}
+            with mock.patch("musicplayer.reporter.installation_id", return_value="MP-A1B2C3D4"), \
+                    mock.patch("musicplayer.reporter._post_json") as request:
+                _submit(paths, item, "https://reports.example.test/report")
+            payload = request.call_args.args[2]
+            blob = payload["title"] + payload["body"] + "".join(payload["comments"])
+            self.assertNotIn(folder, blob)
+
+    def test_old_drive_config_survives_reload(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings_file = os.path.join(root, "settings.json")
+            legacy = {
+                "drive_folder_id": "AAAABBBBCCCCDDDDe9",
+                "drive_slots": [{"name": "Drive 1", "folder": DEFAULT_FOLDER_ID},
+                                {"name": "Drive 2", "folder": "AAAABBBBCCCCDDDDe9"}],
+                "drive_slot": 1,
+            }
+            with open(settings_file, "w", encoding="utf-8") as handle:
+                json.dump(legacy, handle)
+            loaded = Settings(settings_file).load()
+            self.assertEqual(loaded.get("drive_folder_id"), "AAAABBBBCCCCDDDDe9")
+            self.assertEqual(loaded.get("drive_slot"), 1)
+            self.assertEqual(len(loaded.get("drive_slots")), 2)
+            loaded.save()
+            again = Settings(settings_file).load()
+            self.assertEqual(again.get("drive_slots"), loaded.get("drive_slots"))
+            self.assertEqual(again.get("drive_folder_id"), "AAAABBBBCCCCDDDDe9")
 
 
 if __name__ == "__main__":

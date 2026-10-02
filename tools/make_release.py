@@ -24,6 +24,7 @@ EXCLUDED = {
     "music-player-session.log", "music-player-session-stdio.log", "music-player-diagnostics.json",
     "background-session.json", "background-command", "background.pid",
     "background-status.json", "background-resume.json",
+    "drive-cache.json",
 }
 
 

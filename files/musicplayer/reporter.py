@@ -113,6 +113,26 @@ def queue_report(paths, reason, detail="", unique=False):
     return fingerprint
 
 
+def _drive_secrets(paths):
+    try:
+        settings_file = getattr(paths, "settings_file", "")
+        values = Settings(settings_file).load().values if settings_file else {}
+    except Exception:
+        return ()
+    secrets = []
+    slots = values.get("drive_slots") if isinstance(values, dict) else []
+    for slot in slots or []:
+        folder = slot.get("folder") if isinstance(slot, dict) else ""
+        if folder:
+            secrets.append(str(folder))
+    if isinstance(values, dict):
+        for key in ("drive_folder_id", "drive_api_key"):
+            value = values.get(key)
+            if value:
+                secrets.append(str(value))
+    return tuple(secret for secret in secrets if secret)
+
+
 def _report_configuration(paths):
     values = _read_json(os.path.join(paths.app_dir, "reporting.json"), {})
     if not isinstance(values, dict):
@@ -176,7 +196,8 @@ def _submit(paths, item, relay_url):
     title = "[device-log][%s][%s] v%s %s %s" % (
         model, install_id, APP_VERSION, item.get("reason", "unknown")[:80], fingerprint[:12],
     )
-    log_text = _redact(item.get("session_log") or _session_log(paths), paths)
+    drive_secrets = _drive_secrets(paths)
+    log_text = _redact(item.get("session_log") or _session_log(paths), paths, drive_secrets)
     chunks = [
         log_text[index:index + MAX_ISSUE_CHUNK].replace("```", "` ` `")
         for index in range(0, len(log_text), MAX_ISSUE_CHUNK)
@@ -192,7 +213,7 @@ def _submit(paths, item, relay_url):
         "| Device ID | `%s` |" % install_id,
         "| Python | `%s` |" % sys.version.split()[0],
         "| Reason | `%s` |" % item.get("reason", "unknown")[:80],
-        "| Detail | `%s` |" % _redact(item.get("detail", ""), paths).replace("`", ""),
+        "| Detail | `%s` |" % _redact(item.get("detail", ""), paths, drive_secrets).replace("`", ""),
         "| Session log parts | `%d` |" % len(chunks),
         "| Fingerprint | `%s` |" % fingerprint[:16],
         "",
