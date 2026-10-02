@@ -187,7 +187,8 @@ class MusicPlayerApp:
             raise RuntimeError("no TrueType font found on this firmware")
         font_path = candidates[0].encode("utf-8")
         scale = max(0.75, min(self.width / 1024.0, self.height / 768.0))
-        for name, size in (("small", 20), ("body", 27), ("title", 36), ("hero", 44)):
+        for name, size in (("small", 20), ("body", 27), ("title", 36), ("hero", 44),
+                           ("giant", 132)):
             font = self.runtime.TTF_OpenFont(font_path, max(14, round(size * scale)))
             if not font:
                 raise RuntimeError("cannot load font %s" % candidates[0])
@@ -1751,83 +1752,223 @@ class MusicPlayerApp:
             enabled = True
         if not enabled:
             return
-        duration = 2.2
-        start = time.monotonic()
-        event = SDL_Event()
-        while True:
-            elapsed = time.monotonic() - start
-            if elapsed >= duration:
-                break
-            while self.runtime.SDL_PollEvent(ctypes.byref(event)):
-                if event.type == SDL_QUIT:
-                    get_logger().info("quit during intro")
-                    self.running = False
-                    return
+        glyphs = self._build_intro_glyphs()
+        try:
+            duration = 2.2
+            start = time.monotonic()
+            event = SDL_Event()
+            while True:
+                elapsed = time.monotonic() - start
+                if elapsed >= duration:
+                    break
+                while self.runtime.SDL_PollEvent(ctypes.byref(event)):
+                    if event.type == SDL_QUIT:
+                        get_logger().info("quit during intro")
+                        self.running = False
+                        return
+                    try:
+                        self.input.feed(event)
+                    except Exception:
+                        pass
                 try:
-                    self.input.feed(event)
+                    if self.input.poll():
+                        break
                 except Exception:
                     pass
-            try:
-                if self.input.poll():
+                self._render_intro_frame(min(1.0, elapsed / duration), glyphs)
+                try:
+                    self.runtime.SDL_Delay(16)
+                except Exception:
                     break
+        finally:
+            self._free_intro_glyphs(glyphs)
+
+    def _render_glyph(self, letter, font_name, color):
+        try:
+            font = self.fonts[font_name]
+        except (KeyError, TypeError, AttributeError):
+            return (None, 0, 0)
+        surface = self.runtime.TTF_RenderUTF8_Blended(
+            font, letter.encode("utf-8", "replace"), SDL_Color(*color)
+        )
+        if not surface:
+            return (None, 0, 0)
+        texture = self.runtime.SDL_CreateTextureFromSurface(self.renderer, surface)
+        try:
+            width, height = surface.contents.w, surface.contents.h
+        except Exception:
+            width, height = (0, 0)
+        try:
+            self.runtime.SDL_FreeSurface(surface)
+        except Exception:
+            pass
+        if not texture:
+            return (None, 0, 0)
+        return (texture, width, height)
+
+    def _blit_glyph(self, texture, x, y, width, height):
+        if not texture or width <= 0 or height <= 0:
+            return False
+        try:
+            target = SDL_Rect(int(x), int(y), int(width), int(height))
+            self.runtime.SDL_RenderCopy(self.renderer, texture, None, ctypes.byref(target))
+            return True
+        except Exception:
+            return False
+
+    def _build_intro_glyphs(self):
+        cache = {}
+        try:
+            colors = {
+                "dark": (60, 5, 8, 255),
+                "bright": self.INTRO_RED,
+                "white": self.ON_ACCENT,
+            }
+        except Exception:
+            return cache
+        for letter in "NLK":
+            for name, color in colors.items():
+                try:
+                    texture, width, height = self._render_glyph(letter, "giant", color)
+                except Exception:
+                    texture, width, height = (None, 0, 0)
+                if texture:
+                    cache[(letter, name)] = (texture, width, height)
+        get_logger().info("intro glyphs cached=%d", len(cache))
+        return cache
+
+    def _free_intro_glyphs(self, glyphs):
+        for texture, _width, _height in (glyphs or {}).values():
+            try:
+                if texture:
+                    self.runtime.SDL_DestroyTexture(texture)
             except Exception:
                 pass
-            self._render_intro_frame(min(1.0, elapsed / duration))
-            try:
-                self.runtime.SDL_Delay(16)
-            except Exception:
-                break
 
-    def _intro_letter_layout(self):
+    def _intro_letter_layout(self, font_name="hero", spacing=18):
         letters = "NLK"
         try:
-            widths = [self.measure(letter, "hero")[0] for letter in letters]
+            widths = [self.measure(letter, font_name)[0] for letter in letters]
         except Exception:
             widths = [60, 60, 60]
-        spacing = 18
         total = sum(widths) + spacing * (len(letters) - 1)
         cursor = (self.width - total) // 2
         positions = []
         for letter, width in zip(letters, widths):
-            positions.append((letter, cursor))
+            positions.append((letter, cursor, width))
             cursor += width + spacing
         return positions
 
-    def _render_intro_frame(self, progress):
+    def _intro_spread(self, progress):
+        ease = min(1.0, max(0.0, progress / 0.55))
+        return 4 + (30 - 4) * (1 - (1 - ease) * (1 - ease))
+
+    def _render_intro_frame(self, progress, glyphs=None):
         progress = max(0.0, min(1.0, float(progress)))
         self.fill(0, 0, self.width, self.height, self.INTRO_BG)
         center_y = self.height // 2
-        layout = self._intro_letter_layout()
-        for index, (letter, x) in enumerate(layout):
-            enter_at = 0.05 + index * 0.16
-            local = (progress - enter_at) / 0.30
-            if local <= 0.0:
-                continue
-            local = min(1.0, local)
-            rise = int((1.0 - local) * 60)
-            dark, bright = (60, 5, 8, 255), self.INTRO_RED
-            blend = min(1.0, local * 1.5)
-            color = tuple(
-                int(dark[channel] + (bright[channel] - dark[channel]) * blend)
-                for channel in range(3)
-            ) + (255,)
-            if local < 0.45:
-                font = "small"
-            elif local < 0.75:
-                font = "body"
-            else:
-                font = "hero"
-            self.text(letter, x, center_y - 30 + rise, font, color)
-        if progress > 0.72:
-            sweep = (progress - 0.72) / 0.28
-            for index, (letter, x) in enumerate(layout):
-                center = index / 2.0
-                if abs(sweep - center * 0.9) < 0.18:
-                    self.text(letter, x, center_y - 30, "hero", self.ON_ACCENT)
+        if glyphs:
+            self._render_intro_glyphs(progress, glyphs)
+        else:
+            layout = self._intro_letter_layout()
+            for index, (letter, x, _width) in enumerate(layout):
+                enter_at = 0.05 + index * 0.16
+                local = (progress - enter_at) / 0.30
+                if local <= 0.0:
+                    continue
+                local = min(1.0, local)
+                rise = int((1.0 - local) * 60)
+                dark, bright = (60, 5, 8, 255), self.INTRO_RED
+                blend = min(1.0, local * 1.5)
+                color = tuple(
+                    int(dark[channel] + (bright[channel] - dark[channel]) * blend)
+                    for channel in range(3)
+                ) + (255,)
+                if local < 0.45:
+                    font = "small"
+                elif local < 0.75:
+                    font = "body"
+                else:
+                    font = "hero"
+                self.text(letter, x, center_y - 30 + rise, font, color)
+            if progress > 0.72:
+                sweep = (progress - 0.72) / 0.28
+                for index, (letter, x, _width) in enumerate(layout):
+                    center = index / 2.0
+                    if abs(sweep - center * 0.9) < 0.18:
+                        self.text(letter, x, center_y - 30, "hero", self.ON_ACCENT)
         try:
             self.runtime.SDL_RenderPresent(self.renderer)
         except Exception as error:
             get_logger().warning("intro present failed: %s", error)
+
+    def _render_intro_glyphs(self, progress, glyphs):
+        center_y = self.height // 2
+        spacing = self._intro_spread(progress)
+        try:
+            widths = [glyphs[(letter, "bright")][1] for letter in "NLK"]
+        except (KeyError, TypeError):
+            try:
+                widths = [self.measure(letter, "giant")[0] for letter in "NLK"]
+            except Exception:
+                widths = [180, 180, 180]
+        total = sum(widths) + spacing * 2
+        fit = min(1.0, (self.width - 80) / total) if total > 0 else 1.0
+        cursor = (self.width - total * fit) // 2
+        for index, letter in enumerate("NLK"):
+            width = widths[index]
+            try:
+                _texture, tex_w, tex_h = glyphs[(letter, "bright")]
+            except (KeyError, TypeError):
+                cursor += (width + spacing) * fit
+                continue
+            if tex_w <= 0 or tex_h <= 0:
+                cursor += (width + spacing) * fit
+                continue
+            dest_w, dest_h = tex_w * fit, tex_h * fit
+            x = cursor + (width * fit - dest_w) // 2
+            enter_at = 0.05 + index * 0.16
+            local = (progress - enter_at) / 0.30
+            if local > 0.0:
+                local = min(1.0, local)
+                rise = int((1.0 - local) * 90)
+                if local > 0.65:
+                    import math
+                    rise += int(-14 * math.sin((local - 0.65) / 0.35 * math.pi))
+                y = center_y - dest_h // 2 + rise
+                bright = local * 1.5 >= 0.75
+                if bright:
+                    try:
+                        glow, _gw, _gh = glyphs[(letter, "dark")]
+                        self._blit_glyph(glow, x + 4 * fit, y + 6 * fit, dest_w, dest_h)
+                    except (KeyError, TypeError):
+                        pass
+                    key = "bright"
+                else:
+                    key = "dark"
+                try:
+                    texture, _tw, _th = glyphs[(letter, key)]
+                except (KeyError, TypeError):
+                    texture = None
+                self._blit_glyph(texture, x, y, dest_w, dest_h)
+            cursor += (width + spacing) * fit
+        if progress > 0.72:
+            sweep = (progress - 0.72) / 0.28
+            cursor = (self.width - total * fit) // 2
+            for index, letter in enumerate("NLK"):
+                width = widths[index]
+                try:
+                    texture, tex_w, tex_h = glyphs[(letter, "white")]
+                except (KeyError, TypeError):
+                    cursor += (width + spacing) * fit
+                    continue
+                center = index / 2.0
+                if abs(sweep - center * 0.9) < 0.18:
+                    self._blit_glyph(
+                        texture, cursor + (width * fit - tex_w * fit) // 2,
+                        center_y - tex_h * fit // 2, tex_w * fit, tex_h * fit,
+                    )
+                cursor += (width + spacing) * fit
 
     def _render_library(self):
         if getattr(self, "library_mode", "") == "drive":

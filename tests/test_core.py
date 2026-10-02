@@ -1156,6 +1156,47 @@ class TruepodStyleTests(unittest.TestCase):
         self.assertIn("intro", [entry[0] for entry in app._quick_menu_entries()])
         self.assertFalse(app._toggle_intro())
 
+    def test_intro_giant_glyphs_blits_scaled_letters(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.width = 1024
+        app.height = 768
+        app.fill = lambda *args: None
+        app.runtime = mock.Mock()
+        app.renderer = mock.Mock()
+        glyphs = {}
+        for letter in "NLK":
+            for name in ("dark", "bright", "white"):
+                glyphs[(letter, name)] = (mock.Mock(), 90, 120)
+        drawn = []
+        app.text = lambda *args, **kwargs: drawn.append(args[0])
+        app._render_intro_frame(1.0, glyphs)
+        self.assertTrue(app.runtime.SDL_RenderCopy.called)
+        self.assertEqual(drawn, [])
+        app.runtime.SDL_RenderPresent.assert_called_with(app.renderer)
+
+    def test_intro_glyph_cache_builds_and_frees(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        app.fonts = {"giant": mock.Mock()}
+        app.runtime = mock.Mock()
+        app.renderer = mock.Mock()
+        surface = mock.Mock()
+        surface.contents.w = 90
+        surface.contents.h = 120
+        app.runtime.TTF_RenderUTF8_Blended.return_value = surface
+        app.runtime.SDL_CreateTextureFromSurface.return_value = mock.Mock()
+        glyphs = app._build_intro_glyphs()
+        self.assertEqual(len(glyphs), 9)
+        app._free_intro_glyphs(glyphs)
+        self.assertEqual(app.runtime.SDL_DestroyTexture.call_count, 9)
+
+    def test_intro_spread_expands_letter_spacing(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        tight = app._intro_spread(0.0)
+        wide = app._intro_spread(1.0)
+        self.assertLess(tight, wide)
+        self.assertGreaterEqual(tight, 4.0)
+        self.assertLessEqual(wide, 30.0)
+
     def test_intro_defaults_on_and_toggle_saves(self):
         with tempfile.TemporaryDirectory() as root:
             fresh = Settings(os.path.join(root, "settings.json")).load()
