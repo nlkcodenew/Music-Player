@@ -316,6 +316,44 @@ class AppDownloadUiTests(unittest.TestCase):
         with mock.patch("musicplayer.ui.drive_find_offline_copy", return_value=""):
             self.assertFalse(app._drive_row_is_saved(row))
 
+    def test_render_drive_with_badge_does_not_crash(self):
+        """Regression: badge 'ON DEVICE' cong measure() nham tuple -> TypeError.
+
+        measure() tra (width, height); code ve duoc chay that voi stub dung
+        hinh dang tra ve de bat loi cong so nham tuple.
+        """
+        app = self._app()
+        app.width, app.height = 1024, 768
+        app.scroll = 0
+        app.selection = 0
+        app.drive_page_token = ""
+        app.drive_busy = False
+        app.drive_loaded = True
+        app.drive_stack = []
+        app._saved_toast = ("", 0.0)
+        app.drive_entries = [
+            DriveEntry(file_id="F1", name="Bai hat rat dai va co ten thuong.mp3",
+                       mime_type="", size=3 * 1024 * 1024, is_folder=True,
+                       title="Bai hat rat dai va co ten thuong", extension=""),
+            entry(name="song.mp3"),
+            DriveEntry(file_id="F2", name="khac.mp3", mime_type="", size=5,
+                       is_folder=False, title="khac", extension=".mp3"),
+        ]
+        app.fill = mock.Mock(side_effect=lambda *a: None)
+        drawn = []
+        app.text = mock.Mock(side_effect=lambda t, *a, **k: drawn.append(t))
+        # Giong het TTF thật: tra tuple (width, height).
+        app.measure = mock.Mock(side_effect=lambda t, font: (len(t) * 9, 14))
+        with mock.patch("musicplayer.ui.drive_find_offline_copy",
+                        return_value="/music/Drive/A/song.mp3"):
+            app._render_drive()  # phai khong nem
+        self.assertIn("ON DEVICE", drawn)
+        # Render lai khi co toast + khong co badge -> cung phai an toan.
+        app._saved_toast = ("Album / song", time.monotonic())
+        drawn.clear()
+        app._render_drive()
+        self.assertTrue(drawn)
+
     def test_offline_job_poll_reports_failure(self):
         app = self._app()
         job = StreamJob("offline:/x/song.mp3", "song", 0, "offline")

@@ -2391,9 +2391,11 @@ class MusicPlayerApp:
                 # de khong tai trung.
                 badge = "ON DEVICE"
                 badge_w = self.measure(badge, "small")[0] + 16
-                badge_x = 32 + self.measure(
+                # measure() tra (width, height) -> phai lay [0] truoc khi cong.
+                title_px = self.measure(
                     self.ellipsize(title, self.width - 400 - spec_width, "body"), "body",
-                ) + 14
+                )[0]
+                badge_x = 32 + title_px + 14
                 if badge_x + badge_w < self.width - 300 - spec_width:
                     self.fill(badge_x, y + 3, badge_w, 20, self.ACCENT_SOFT)
                     self.text(badge, badge_x + 8, y + 5, "small", self.ACCENT)
