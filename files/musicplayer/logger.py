@@ -38,3 +38,46 @@ def init_logging(path, session_path=None, append_session=False):
 
 def get_logger():
     return logging.getLogger(LOGGER_NAME)
+
+
+def log_backup_paths(paths):
+    """Rotated backups that are safe to delete (live logs excluded)."""
+    candidates = []
+    for path in (
+        getattr(paths, "log_file", ""),
+        getattr(paths, "stdio_log_file", ""),
+    ):
+        if not isinstance(path, str) or not path:
+            continue
+        candidates.append(path + ".1")
+        candidates.append(path + ".2")
+    seen = []
+    for path in candidates:
+        if path not in seen:
+            seen.append(path)
+    return seen
+
+
+def clear_log_backups(paths):
+    """Delete rotated log backups; returns freed bytes."""
+    freed = 0
+    for path in log_backup_paths(paths):
+        try:
+            freed += os.path.getsize(path)
+            os.unlink(path)
+        except OSError:
+            pass
+    if freed:
+        get_logger().info("cleared log backups bytes=%d", freed)
+    return freed
+
+
+def log_backup_bytes(paths):
+    """Total bytes currently held by rotated log backups."""
+    total = 0
+    for path in log_backup_paths(paths):
+        try:
+            total += os.path.getsize(path)
+        except OSError:
+            pass
+    return total

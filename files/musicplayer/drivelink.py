@@ -20,11 +20,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .drive import (
     extract_folder_id,
+    find_slot,
     forget_folder,
     list_folder_public,
+    next_slot_name,
+    normalize_slots,
     put_cached_folder,
 )
 from .logger import get_logger
+from .reporter import queue_report
 from .settings import Settings
 
 PORT = 8080
@@ -75,32 +79,53 @@ def lan_url(port):
     return "http://%s:%d/" % (host, port)
 
 
+def _queue_link_report(paths, detail):
+    try:
+        queue_report(paths, "drive_link_failed", detail)
+    except Exception as error:
+        get_logger().warning("cannot queue drive link report: %s", error)
+
+
 def submit_drive_link(paths, raw_url):
     """Validate ``raw_url``, save its folder id and sync the listing.
 
-    Returns ``(ok, message, count)``. ``count`` is the number of items
-    synced (0 when the save failed).
+    The share joins the named drive slots ("Drive 1", "Drive 2", ...)
+    and becomes the active one. Failures are queued for diagnostics
+    (uploaded only with the user's consent) besides the on-screen
+    message. Returns ``(ok, message, count)``.
     """
     text = str(raw_url or "").strip()
     if len(text) > 500:
+        _queue_link_report(paths, "link too long")
         return False, "Link is too long", 0
     folder_id = extract_folder_id(text)
     if not folder_id:
+        _queue_link_report(paths, "not a folder link")
         return False, "Not a Drive folder link", 0
     try:
         entries, _token = list_folder_public(paths.app_dir, folder_id)
     except Exception as error:
         get_logger().warning("drive link validation failed: %s", error)
+        _queue_link_report(paths, "share unreachable")
         return False, "Cannot open that share (check link and Wi-Fi)", 0
     try:
-        previous = str(Settings(paths.settings_file).load().get("drive_folder_id") or "")
-    except Exception:
+        settings = Settings(paths.settings_file).load()
+        slots = normalize_slots(settings.get("drive_slots"), settings.get("drive_folder_id"))
         previous = ""
-    settings = Settings(paths.settings_file).load()
-    settings.set("drive_folder_id", folder_id)
-    try:
+        try:
+            previous = str(slots[int(settings.get("drive_slot", 0))]["folder"])
+        except (TypeError, ValueError, IndexError, KeyError):
+            pass
+        slot_index = find_slot(slots, folder_id)
+        if slot_index < 0:
+            slots.append({"name": next_slot_name(slots), "folder": folder_id})
+            slot_index = len(slots) - 1
+        settings.set("drive_slots", slots)
+        settings.set("drive_slot", slot_index)
+        settings.set("drive_folder_id", folder_id)
         settings.save()
     except OSError as error:
+        _queue_link_report(paths, "settings save failed")
         return False, "Cannot save settings: %s" % error, 0
     try:
         if previous and previous != folder_id:
@@ -108,8 +133,9 @@ def submit_drive_link(paths, raw_url):
         put_cached_folder(paths.data_dir, folder_id, entries, "")
     except Exception as error:
         get_logger().warning("drive link cache sync failed: %s", error)
-    message = "Saved! %d items synced - open DRIVE to browse" % len(entries)
-    get_logger().info("drive link updated folder=%s items=%d", folder_id, len(entries))
+    name = slots[slot_index]["name"]
+    message = "Saved to %s! %d items synced - opening DRIVE..." % (name, len(entries))
+    get_logger().info("drive link updated slot=%s folder=%s items=%d", name, folder_id, len(entries))
     return True, message, len(entries)
 
 

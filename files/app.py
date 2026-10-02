@@ -9,7 +9,7 @@ import traceback
 from musicplayer.diagnostics import collect_diagnostics, write_diagnostics
 from musicplayer import APP_VERSION
 from musicplayer.library import scan_library
-from musicplayer.logger import get_logger, init_logging
+from musicplayer.logger import clear_log_backups, get_logger, init_logging
 from musicplayer.paths import RuntimePaths
 from musicplayer.reporter import queue_report, retry_pending
 
@@ -33,6 +33,10 @@ def main():
         append_session=args.background or os.path.isfile(resume_path) or os.path.isfile(status_path),
     )
     log = get_logger()
+    try:
+        clear_log_backups(paths)
+    except Exception as error:
+        log.warning("log prune failed: %s", error)
     log.info(
         "starting Music Player version=%s os=%s mode=%s",
         APP_VERSION, paths.os_name, "background" if args.background else "foreground",

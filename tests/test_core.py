@@ -2211,11 +2211,44 @@ class AddDriveScreenTests(unittest.TestCase):
         server = mock.Mock()
         server.poll.return_value = {"ok": True, "message": "Saved! 3 items synced"}
         app.link_server = server
-        app._poll_drive_link()
+        with mock.patch.object(app, "_drive_refresh"):
+            app._poll_drive_link()
         self.assertEqual(app.settings.get("drive_folder_id"), DEFAULT_FOLDER_ID)
         app.settings.save.assert_called()
         self.assertEqual(app.screen, "library")
+        self.assertEqual(app.library_mode, "drive")
         self.assertIn("synced", app.status)
+
+    def test_poll_prefers_settings_file_over_stale_memory(self):
+        import musicplayer.ui as ui_module
+        with tempfile.TemporaryDirectory() as root:
+            settings_file = os.path.join(root, "settings.json")
+            app = self._app()
+            app.paths = mock.Mock(app_dir=root, data_dir=root, music_dir=root,
+                                  settings_file=settings_file)
+            old_id, new_id = "AAAABBBBCCCCDDDDe0", "AAAABBBBCCCCDDDDe9"
+            values = {"drive_folder_id": old_id, "drive_api_key": "",
+                      "drive_slots": [], "drive_slot": 0}
+            app.settings = mock.Mock()
+            app.settings.get.side_effect = values.get
+            app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+            file_settings = Settings(settings_file)
+            file_settings.set("drive_folder_id", new_id)
+            file_settings.set("drive_slots", [
+                {"name": "Drive 1", "folder": old_id},
+                {"name": "Drive 2", "folder": new_id},
+            ])
+            file_settings.set("drive_slot", 1)
+            file_settings.save()
+            app.screen = "addrive"
+            server = mock.Mock()
+            server.poll.return_value = {"ok": True, "message": "Saved to Drive 2! 5 items"}
+            app.link_server = server
+            with mock.patch.object(app, "_drive_refresh"):
+                app._poll_drive_link()
+            self.assertEqual(values["drive_folder_id"], new_id)
+            self.assertEqual(values["drive_slot"], 1)
+            self.assertEqual(app.library_mode, "drive")
 
     def test_poll_reports_failed_link(self):
         app = self._app()
@@ -2245,6 +2278,128 @@ class AddDriveScreenTests(unittest.TestCase):
         blob = "\n".join(str(line) for line in texts)
         self.assertIn("http://1.2.3.4:8080/", blob)
         self.assertIn("same Wi-Fi", blob)
+
+
+class DriveSlotTests(unittest.TestCase):
+    def test_fresh_settings_seed_drive_one(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = Settings(os.path.join(root, "settings.json")).load()
+        self.assertEqual(settings.get("drive_slots"),
+                         [{"name": "Drive 1", "folder": DEFAULT_FOLDER_ID}])
+        self.assertEqual(settings.get("drive_slot"), 0)
+
+    def test_slot_helpers_name_and_find(self):
+        ida, idb = "AAAABBBBCCCCDDDDe1", "AAAABBBBCCCCDDDDe2"
+        self.assertEqual(drive_module.next_slot_name([]), "Drive 1")
+        slots = [{"name": "Drive 1", "folder": ida},
+                 {"name": "My Music", "folder": idb}]
+        self.assertEqual(drive_module.next_slot_name(slots), "Drive 2")
+        self.assertEqual(drive_module.find_slot(slots, idb), 1)
+        self.assertEqual(drive_module.find_slot(slots, "Z"), -1)
+        cleaned = drive_module.normalize_slots(
+            [{"name": "  ", "folder": ida}, {"name": "x", "folder": "bad"},
+             {"name": "Dup", "folder": ida}, "junk"], ida)
+        self.assertEqual(cleaned, [{"name": "Drive", "folder": ida}])
+
+    def test_submit_assigns_drive_two_and_switches(self):
+        import musicplayer.drivelink as links
+        with tempfile.TemporaryDirectory() as root:
+            settings_file = os.path.join(root, "settings.json")
+            paths = mock.Mock(app_dir=root, data_dir=root, settings_file=settings_file,
+                              pending_reports_file=os.path.join(root, "pending.json"),
+                              session_log_file="", log_file="", stdio_log_file="",
+                              session_stdio_log_file="")
+            entries = [mock.Mock(file_id="F9", is_folder=True, name="Album",
+                                 mime_type="", size=0, title="Album", extension="")]
+            with mock.patch.object(links, "list_folder_public", return_value=(entries, "")), \
+                    mock.patch.object(links, "put_cached_folder"), \
+                    mock.patch.object(links, "forget_folder"):
+                ok, message, _count = links.submit_drive_link(
+                    paths, "https://drive.google.com/drive/folders/AAAABBBBCCCCDDDDe9")
+            self.assertTrue(ok)
+            self.assertIn("Drive 2", message)
+            saved = Settings(settings_file).load()
+            self.assertEqual(saved.get("drive_slot"), 1)
+            self.assertEqual(saved.get("drive_folder_id"), "AAAABBBBCCCCDDDDe9")
+            self.assertEqual(len(saved.get("drive_slots")), 2)
+            with mock.patch.object(links, "list_folder_public", return_value=(entries, "")), \
+                    mock.patch.object(links, "put_cached_folder"), \
+                    mock.patch.object(links, "forget_folder"):
+                ok, _message, _count = links.submit_drive_link(
+                    paths, "https://drive.google.com/drive/folders/AAAABBBBCCCCDDDDe9")
+            self.assertTrue(ok)
+            saved = Settings(settings_file).load()
+            self.assertEqual(len(saved.get("drive_slots")), 2)
+
+    def test_submit_failure_is_queued_for_diagnostics(self):
+        import musicplayer.drivelink as links
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(
+                app_dir=root, data_dir=root,
+                settings_file=os.path.join(root, "settings.json"),
+                pending_reports_file=os.path.join(root, "pending.json"),
+                session_log_file="", session_stdio_log_file="",
+                log_file="", stdio_log_file="", sdcard_path=root, music_dir=root)
+            ok, _message, _count = links.submit_drive_link(paths, " garbage ")
+            self.assertFalse(ok)
+            with open(os.path.join(root, "pending.json"), encoding="utf-8") as handle:
+                pending = json.load(handle)
+            self.assertEqual(pending[0]["reason"], "drive_link_failed")
+
+    def test_offline_path_nests_slot_album(self):
+        with tempfile.TemporaryDirectory() as root:
+            music = os.path.join(root, "Music")
+            single = offline_path(music, "Ballads", "01 Song.flac")
+            self.assertEqual(
+                os.path.relpath(single, music), os.path.join("Drive", "Ballads", "01 Song.flac"))
+            nested = offline_path(music, "Drive 2/Ballads", "01 Song.flac")
+            self.assertEqual(
+                os.path.relpath(nested, music),
+                os.path.join("Drive", "Drive 2", "Ballads", "01 Song.flac"))
+
+    def test_cycle_drive_slot_switches_folder(self):
+        ida, idb = "AAAABBBBCCCCDDDDe1", "AAAABBBBCCCCDDDDe2"
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"drive_folder_id": ida, "drive_api_key": "",
+                  "drive_slots": [{"name": "Drive 1", "folder": ida},
+                                  {"name": "Drive 2", "folder": idb}],
+                  "drive_slot": 0}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.drive_stack = []
+        app.drive_entries = []
+        app.drive_page_token = ""
+        app.drive_loaded = True
+        app.selection = 0
+        app.scroll = 0
+        app.status = ""
+        app.status_error = False
+        with mock.patch.object(app, "_drive_refresh"):
+            name = app._cycle_drive_slot(1)
+        self.assertEqual(name, "Drive 2")
+        self.assertEqual(values["drive_slot"], 1)
+        self.assertEqual(values["drive_folder_id"], idb)
+        self.assertEqual(app._drive_folder_id(), idb)
+        self.assertEqual(app._drive_slot_name(), "Drive 2")
+
+
+class LogPruneTests(unittest.TestCase):
+    def test_clear_log_backups_frees_space(self):
+        from musicplayer.logger import clear_log_backups, log_backup_bytes, log_backup_paths
+        with tempfile.TemporaryDirectory() as root:
+            main_log = os.path.join(root, "music-player.log")
+            with open(main_log, "wb") as handle:
+                handle.write(b"live")
+            with open(main_log + ".1", "wb") as handle:
+                handle.write(b"x" * 100)
+            paths = mock.Mock(log_file=main_log, stdio_log_file=os.path.join(root, "s.log"))
+            self.assertEqual(log_backup_bytes(paths), 100)
+            self.assertEqual(len(log_backup_paths(paths)), 4)
+            self.assertEqual(clear_log_backups(paths), 100)
+            self.assertTrue(os.path.isfile(main_log))
+            self.assertFalse(os.path.exists(main_log + ".1"))
+            self.assertEqual(log_backup_bytes(paths), 0)
 
 
 if __name__ == "__main__":

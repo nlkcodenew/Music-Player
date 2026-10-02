@@ -2,6 +2,8 @@ import json
 import os
 import tempfile
 
+from .drive import DEFAULT_FOLDER_ID, extract_folder_id, normalize_slots
+
 
 DEFAULTS = {
     "volume": 80,
@@ -22,6 +24,8 @@ DEFAULTS = {
     "intro": True,
     "drive_folder_id": "1KB8-kxt0QSpgBSQw4VMIQmYCGS3F2D2a",
     "drive_api_key": "",
+    "drive_slots": [],
+    "drive_slot": 0,
 }
 
 
@@ -51,7 +55,7 @@ class Settings:
             with open(self.path, "r", encoding="utf-8") as handle:
                 loaded = json.load(handle)
         except (OSError, ValueError, TypeError):
-            return self
+            loaded = {}
         if isinstance(loaded, dict):
             self.values.update({key: loaded[key] for key in DEFAULTS if key in loaded})
         self.values["volume"] = max(0, min(100, int(self.values.get("volume", 80))))
@@ -85,6 +89,17 @@ class Settings:
         folder = extract_folder_id(raw_folder) if raw_folder else ""
         self.values["drive_folder_id"] = folder or DEFAULT_FOLDER_ID
         self.values["drive_api_key"] = str(self.values.get("drive_api_key", "") or "").strip()
+        raw_slots = self.values.get("drive_slots")
+        slots = normalize_slots(
+            raw_slots if isinstance(raw_slots, list) else [],
+            self.values["drive_folder_id"],
+        )
+        self.values["drive_slots"] = slots
+        try:
+            slot_index = int(self.values.get("drive_slot", 0))
+        except (TypeError, ValueError):
+            slot_index = 0
+        self.values["drive_slot"] = max(0, min(slot_index, len(slots) - 1))
         return self
 
     def save(self):

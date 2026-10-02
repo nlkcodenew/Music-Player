@@ -362,6 +362,48 @@ def clear_cache(data_dir):
     shutil.rmtree(stream_dir, ignore_errors=True)
 
 
+def normalize_slots(slots, fallback_folder=""):
+    """Clean a drive slot list; seed "Drive 1" when empty.
+
+    Each slot is ``{"name": ..., "folder": ...}``. Duplicated folders are
+    dropped, bad entries skipped. Never returns an empty list when a
+    fallback folder is available.
+    """
+    cleaned = []
+    for item in slots or []:
+        if not isinstance(item, dict):
+            continue
+        folder = extract_folder_id(item.get("folder", ""))
+        if not folder or any(slot["folder"] == folder for slot in cleaned):
+            continue
+        name = re.sub(r"\s+", " ", str(item.get("name", "") or "")).strip()[:24]
+        cleaned.append({"name": name or "Drive", "folder": folder})
+    fallback = extract_folder_id(fallback_folder or "")
+    if not cleaned and fallback:
+        cleaned.append({"name": "Drive 1", "folder": fallback})
+    return cleaned
+
+
+def next_slot_name(slots):
+    """First free "Drive N" label for a newly added share."""
+    taken = set()
+    for slot in slots or []:
+        match = re.fullmatch(r"Drive\s+(\d+)", str(slot.get("name", "")).strip(), re.IGNORECASE)
+        if match:
+            taken.add(int(match.group(1)))
+    number = 1
+    while number in taken:
+        number += 1
+    return "Drive %d" % number
+
+
+def find_slot(slots, folder_id):
+    for index, slot in enumerate(slots or []):
+        if slot.get("folder") == folder_id:
+            return index
+    return -1
+
+
 def forget_folder(data_dir, folder_id):
     """Drop cached listing pages for one folder (keeps stream files)."""
     if not folder_id:
@@ -525,9 +567,9 @@ def ensure_stream_file(app_dir, data_dir, entry, api_key=""):
 
 
 def offline_path(music_dir, album, filename):
-    album_dir = os.path.join(
-        music_dir, OFFLINE_SUBDIR, sanitize_component(album, "Drive")
-    )
+    parts = [sanitize_component(part, "Drive") for part in str(album or "").split("/")]
+    parts = [part for part in parts if part] or ["Drive"]
+    album_dir = os.path.join(music_dir, OFFLINE_SUBDIR, *parts)
     return os.path.join(album_dir, sanitize_component(filename, "track"))
 
 

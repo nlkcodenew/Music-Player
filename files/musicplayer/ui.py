@@ -30,7 +30,7 @@ from .identity import installation_id
 from .audio_format import format_spec
 from .leds import LedController
 from .library import Track
-from .logger import get_logger
+from .logger import clear_log_backups, get_logger, log_backup_bytes
 from .lyrics import load_lyrics
 from .reporter import queue_report, retry_pending
 from .settings import Settings
@@ -649,8 +649,10 @@ class MusicPlayerApp:
             ("spectrum", "Spectrum: %s" % ("On" if self.settings.get("spectrum") else "Off")),
             ("intro", "Intro: %s" % ("On" if self.settings.get("intro") else "Off")),
             ("drive_refresh", "Drive Refresh"),
+            ("drive_slot", "Drive: %s" % self._drive_slot_name()),
             ("drive_download", "Drive Download (offline)"),
             ("drive_clear", "Drive Cache: %s - Clear" % self._drive_cache_label()),
+            ("clear_logs", "Clear Logs (%s)" % self._logs_label()),
             ("audio_info", "Audio Info"),
             ("check_update", "Check for Update"),
             ("sleep", "Sleep Timer: %s" % self.sleep_timer.label),
@@ -699,6 +701,9 @@ class MusicPlayerApp:
         if selected == "sleep" and action in ("left", "right"):
             self._cycle_sleep_timer(-1 if action == "left" else 1)
             return
+        if selected == "drive_slot" and action in ("left", "right"):
+            self._cycle_drive_slot(-1 if action == "left" else 1)
+            return
         if selected == "audio_output" and action in ("left", "right"):
             self._cycle_audio_output(-1 if action == "left" else 1)
             return
@@ -735,6 +740,8 @@ class MusicPlayerApp:
             self.selection = 0
             self.scroll = 0
             self._drive_refresh()
+        elif selected == "drive_slot":
+            self._cycle_drive_slot(1)
         elif selected == "drive_download":
             self.quick_menu = False
             if self.library_mode == "drive" and self.screen == "library":
@@ -757,6 +764,15 @@ class MusicPlayerApp:
                 self.drive_page_token = ""
                 self.drive_loaded = False
                 self.status = "Drive cache cleared (%s freed)" % drive_format_bytes(before)
+                self.status_error = False
+        elif selected == "clear_logs":
+            try:
+                freed = clear_log_backups(self.paths)
+            except Exception as error:
+                self.status = "Clear logs: %s" % error
+                self.status_error = True
+            else:
+                self.status = "Logs cleared (%s freed)" % drive_format_bytes(freed)
                 self.status_error = False
         elif selected == "audio_info":
             self.status = self._audio_info_line()
@@ -1113,13 +1129,26 @@ class MusicPlayerApp:
             self.status = result.get("message", "Drive link failed")
             self.status_error = True
             return
+        # Read the fresh values from disk: the web thread saved them, and
+        # this process's in-memory settings may still hold the previous
+        # folder. Never write the stale memory back over the file.
         try:
-            folder_id = str(self.settings.get("drive_folder_id") or "")
-        except Exception:
-            folder_id = ""
+            fresh = Settings(self.paths.settings_file).load()
+            folder_id = str(fresh.get("drive_folder_id") or "")
+            slots = fresh.get("drive_slots")
+            slot_index = fresh.get("drive_slot")
+        except Exception as error:
+            get_logger().warning("cannot reload drive settings: %s", error)
+            folder_id, slots, slot_index = "", [], 0
         folder_id = drive_extract_folder_id(folder_id) if folder_id else DEFAULT_FOLDER_ID
         try:
             self.settings.set("drive_folder_id", folder_id)
+            if isinstance(slots, list) and slots:
+                self.settings.set("drive_slots", slots)
+            try:
+                self.settings.set("drive_slot", max(0, int(slot_index)))
+            except (TypeError, ValueError):
+                pass
             self.settings.save()
         except Exception as error:
             get_logger().warning("cannot save drive folder: %s", error)
@@ -1132,6 +1161,7 @@ class MusicPlayerApp:
         self.status = result.get("message", "Drive link saved")
         self.status_error = False
         self._close_add_drive()
+        self._open_drive()
 
     def _cycle_library_mode(self):
         modes = ("all", "favorites", "playlists", "favorite_playlists")
@@ -1145,11 +1175,74 @@ class MusicPlayerApp:
         get_logger().info("library mode=%s", self.library_mode)
 
     def _drive_folder_id(self):
+        slot = self._drive_slot()
+        if slot:
+            return slot["folder"]
         try:
             folder = str(self.settings.get("drive_folder_id") or "").strip()
         except Exception:
             folder = ""
         return drive_extract_folder_id(folder) if folder else DEFAULT_FOLDER_ID
+
+    def _drive_slots(self):
+        try:
+            from .drive import normalize_slots
+        except Exception:
+            normalize_slots = None
+        try:
+            raw = self.settings.get("drive_slots")
+            fallback = str(self.settings.get("drive_folder_id") or "")
+        except Exception:
+            raw, fallback = [], ""
+        if normalize_slots is None:
+            return [{"name": "Drive 1", "folder": fallback or DEFAULT_FOLDER_ID}]
+        slots = normalize_slots(raw if isinstance(raw, list) else [], fallback)
+        if not slots:
+            slots = [{"name": "Drive 1", "folder": fallback or DEFAULT_FOLDER_ID}]
+        return slots
+
+    def _drive_slot_index(self):
+        slots = self._drive_slots()
+        try:
+            index = int(self.settings.get("drive_slot", 0))
+        except Exception:
+            index = 0
+        return max(0, min(index, len(slots) - 1))
+
+    def _drive_slot(self):
+        slots = self._drive_slots()
+        if not slots:
+            return None
+        return slots[self._drive_slot_index()]
+
+    def _drive_slot_name(self):
+        slot = self._drive_slot()
+        name = str(slot.get("name", "")).strip() if slot else ""
+        return name or "Drive"
+
+    def _cycle_drive_slot(self, step=1):
+        slots = self._drive_slots()
+        if len(slots) < 2:
+            self.status = "Only one Drive (%s)" % self._drive_slot_name()
+            self.status_error = False
+            return self._drive_slot_name()
+        index = (self._drive_slot_index() + step) % len(slots)
+        self.settings.set("drive_slot", index)
+        self.settings.set("drive_folder_id", slots[index]["folder"])
+        self.settings.save()
+        self.drive_stack = []
+        self.drive_entries = []
+        self.drive_page_token = ""
+        self.drive_loaded = False
+        self._prefetch_base = None
+        self._prefetch_target = -1
+        self.selection = 0
+        self.scroll = 0
+        self.status = "Drive: %s" % slots[index]["name"]
+        self.status_error = False
+        get_logger().info("drive slot=%s folder=%s", slots[index]["name"], slots[index]["folder"])
+        self._drive_refresh()
+        return slots[index]["name"]
 
     def _drive_api_key(self):
         try:
@@ -1164,14 +1257,16 @@ class MusicPlayerApp:
 
     def _drive_path_label(self):
         names = [name for _, name in (getattr(self, "drive_stack", []) or [])]
+        root = self._drive_slot_name()
         if not names:
-            return "DRIVE"
-        return "DRIVE/" + "/".join(names[1:] if len(names) > 1 else names)
+            return root.upper()
+        return "%s/%s" % (root, "/".join(names[1:] if len(names) > 1 else names))
 
     def _drive_album_label(self):
         names = [name for _, name in (getattr(self, "drive_stack", []) or [])]
         cleaned = [name for name in names if name and name != "Drive"]
-        return "/".join(cleaned) if cleaned else "Drive"
+        sub = "/".join(cleaned)
+        return "%s/%s" % (self._drive_slot_name(), sub) if sub else self._drive_slot_name()
 
     def _drive_refresh(self, page_token="", append=False):
         if getattr(self, "drive_busy", False):
@@ -1257,6 +1352,12 @@ class MusicPlayerApp:
             )
         except Exception:
             return "Clear"
+
+    def _logs_label(self):
+        try:
+            return drive_format_bytes(log_backup_bytes(self.paths))
+        except Exception:
+            return "0MB"
 
     def _maybe_prefetch_drive(self):
         """Download the upcoming Drive track in the background while playing."""
@@ -1373,7 +1474,7 @@ class MusicPlayerApp:
 
     def _drive_track_for(self, entry):
         album = self._drive_album_label()
-        folder = "Drive/%s" % album if album != "Drive" else "Drive"
+        folder = album if album != "Drive" else "Drive"
         return Track(
             path="drive://%s/%s" % (entry.file_id, entry.name),
             title=entry.title,
@@ -1760,7 +1861,7 @@ class MusicPlayerApp:
     def _render_source(self):
         rows = [
             ("LOCAL", "%d tracks on this device" % len(getattr(self, "tracks", []) or [])),
-            ("DRIVE", "Google Drive (online)"),
+            ("DRIVE", "%s (online)" % self._drive_slot_name()),
             ("+ Add Drive", "Link your own Drive folder"),
         ]
         try:
