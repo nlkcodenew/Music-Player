@@ -182,7 +182,7 @@ def public_download_url(file_id):
     )
 
 
-def _fetch_bytes(app_dir, url, limit=256 * 1024):
+def _fetch_bytes(app_dir, url, limit=256 * 1024, timeout=25):
     if urllib.parse.urlparse(url).scheme != "https":
         raise DriveError("Drive only accepts HTTPS URLs")
     request = urllib.request.Request(
@@ -190,7 +190,7 @@ def _fetch_bytes(app_dir, url, limit=256 * 1024):
     )
     try:
         with urllib.request.urlopen(
-            request, timeout=25, context=verified_context(app_dir)
+            request, timeout=timeout, context=verified_context(app_dir)
         ) as response:
             return response.read(limit + 1)
     except urllib.error.HTTPError as error:
@@ -199,9 +199,10 @@ def _fetch_bytes(app_dir, url, limit=256 * 1024):
         raise DriveError("Drive network: %s" % error.reason)
 
 
-def list_folder(app_dir, folder_id, api_key, page_token="", page_size=PAGE_SIZE):
+def list_folder(app_dir, folder_id, api_key, page_token="", page_size=PAGE_SIZE,
+                timeout=8):
     url = build_list_url(folder_id, api_key, page_token, page_size)
-    raw = _fetch_bytes(app_dir, url)
+    raw = _fetch_bytes(app_dir, url, timeout=timeout)
     if len(raw) > 256 * 1024:
         raise DriveError("Drive response exceeds size limit")
     try:
@@ -263,12 +264,12 @@ def parse_embed_page(markup):
     return entries, ""
 
 
-def list_folder_public(app_dir, folder_id):
+def list_folder_public(app_dir, folder_id, timeout=8):
     """List one public folder with no API key (keyless embed view)."""
     if not folder_id:
         raise DriveError("Drive folder is not configured")
     url = EMBED_VIEW_URL % urllib.parse.quote(str(folder_id), safe="")
-    raw = _fetch_bytes(app_dir, url, MAX_EMBED_BYTES)
+    raw = _fetch_bytes(app_dir, url, MAX_EMBED_BYTES, timeout)
     if len(raw) > MAX_EMBED_BYTES:
         raise DriveError("Drive folder page exceeds size limit")
     return parse_embed_page(raw)

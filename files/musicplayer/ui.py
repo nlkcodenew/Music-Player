@@ -1261,6 +1261,13 @@ class MusicPlayerApp:
         finally:
             self.drive_busy = False
 
+    def _drive_friendly_error(self, error):
+        text = str(error or "Drive failed")
+        lowered = text.lower()
+        if "network" in lowered or "timed out" in lowered or "url error" in lowered:
+            return "Connect Wi-Fi, then try again"
+        return text
+
     def _drive_refresh_inner(self, page_token="", append=False):
         if not getattr(self, "drive_stack", None) and not append:
             try:
@@ -1304,10 +1311,13 @@ class MusicPlayerApp:
                 self.drive_entries = (self.drive_entries + cached_entries) if append else cached_entries
                 self.drive_page_token = cached_token
                 self.drive_loaded = True
-                self.status = "Drive offline cache (%d items)" % len(self.drive_entries)
+                self.status = "OFFLINE - cached copy (%d items)" % len(self.drive_entries)
                 self.status_error = False
+            elif "network" in str(error).lower():
+                self.status = "No cached Drive data - turn Wi-Fi on, then Drive Refresh"
+                self.status_error = True
             else:
-                self.status = "Drive: %s - check Wi-Fi" % error
+                self.status = "Drive: %s" % error
                 self.status_error = True
             get_logger().warning("drive list failed: %s", error)
             return
@@ -1550,7 +1560,7 @@ class MusicPlayerApp:
         if self.player.play(target):
             self.screen = "playing"
             return True
-        self.status = self.player.error or "Drive playback failed"
+        self.status = self._drive_friendly_error(self.player.error or "Drive playback failed")
         self.status_error = True
         return False
 
@@ -1577,7 +1587,7 @@ class MusicPlayerApp:
                 app_dir, music_dir, album, entry, self._drive_api_key(),
             )
         except DriveError as error:
-            self.status = "Drive download: %s" % error
+            self.status = self._drive_friendly_error("Drive download: %s" % error)
             self.status_error = True
             get_logger().warning("drive download failed: %s", error)
             return None
@@ -2118,11 +2128,17 @@ class MusicPlayerApp:
             pass
         if not rows:
             if getattr(self, "drive_busy", False):
-                message = "Loading Drive..."
+                message, detail = "Loading Drive...", ""
+            elif getattr(self, "drive_loaded", False):
+                message, detail = "This Drive folder is empty", "This share has no audio files"
             else:
-                message = "Drive is empty or offline"
+                message, detail = (
+                    "No cached Drive data",
+                    "Turn Wi-Fi on, then SELECT menu: Drive Refresh",
+                )
             self.text(message, self.width // 2, self.height // 2 - 35, "hero", center=True)
-            self.text("Check Wi-Fi, then SELECT menu: Drive Refresh", self.width // 2, self.height // 2 + 25, "small", self.MUTED, center=True)
+            if detail:
+                self.text(detail, self.width // 2, self.height // 2 + 25, "small", self.MUTED, center=True)
             return
         visible_rows = self.visible_rows()
         self.scroll = min(self.scroll, self.selection)

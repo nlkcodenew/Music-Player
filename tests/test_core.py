@@ -2596,5 +2596,98 @@ class DrivePrivacyTests(unittest.TestCase):
             self.assertEqual(again.get("drive_folder_id"), "AAAABBBBCCCCDDDDe9")
 
 
+class DriveOfflineTests(unittest.TestCase):
+    def _app(self):
+        app = MusicPlayerApp.__new__(MusicPlayerApp)
+        values = {"drive_folder_id": DEFAULT_FOLDER_ID, "drive_api_key": "",
+                  "drive_slots": [{"name": "Drive 1", "folder": DEFAULT_FOLDER_ID}],
+                  "drive_slot": 0}
+        app.settings = mock.Mock()
+        app.settings.get.side_effect = values.get
+        app.settings.set.side_effect = lambda key, value: values.__setitem__(key, value)
+        app.paths = mock.Mock(app_dir="/app", data_dir="/data", music_dir="/m")
+        app.drive_stack = []
+        app.drive_entries = []
+        app.drive_page_token = ""
+        app.drive_busy = False
+        app.drive_loaded = False
+        app.selection = 0
+        app.scroll = 0
+        app.status = ""
+        app.status_error = False
+        app.width = 640
+        app.height = 480
+        return app
+
+    def test_listing_probe_uses_short_timeout(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = (
+            '<div class="flip-entry" id="entry-AAAABBBBCCCCDDDDe1">'
+            '<a href="https://drive.google.com/drive/folders/AAAABBBBCCCCDDDDe1">'
+            '<div class="flip-entry-title">Album</div></a></div>').encode("utf-8")
+        response.__exit__.return_value = False
+        with mock.patch("musicplayer.drive.verified_context", return_value=None), \
+                mock.patch("musicplayer.drive.urllib.request.urlopen",
+                           return_value=response) as open_url:
+            drive_module.list_folder_public("/app", DEFAULT_FOLDER_ID)
+        _request, kwargs = open_url.call_args[0][0], open_url.call_args[1]
+        self.assertEqual(kwargs.get("timeout"), 8)
+
+    def test_offline_cache_state_is_explicit(self):
+        app = self._app()
+        cached = [mock.Mock(file_id="F1", is_folder=False)]
+        with mock.patch("musicplayer.ui.drive_list_public",
+                        side_effect=DriveError("Drive network: down")), \
+                mock.patch("musicplayer.ui.drive_get_cached", return_value=(cached, "")), \
+                mock.patch("musicplayer.ui.drive_put_cache"):
+            app._drive_refresh()
+        self.assertTrue(app.drive_loaded)
+        self.assertIn("OFFLINE", app.status)
+        self.assertIn("cached", app.status)
+        self.assertFalse(app.status_error)
+
+    def test_offline_without_cache_points_to_wifi(self):
+        app = self._app()
+        with mock.patch("musicplayer.ui.drive_list_public",
+                        side_effect=DriveError("Drive network: down")), \
+                mock.patch("musicplayer.ui.drive_get_cached", return_value=None):
+            app._drive_refresh()
+        self.assertFalse(app.drive_loaded)
+        self.assertIn("Wi-Fi", app.status)
+        self.assertTrue(app.status_error)
+
+    def test_dead_share_keeps_original_error(self):
+        app = self._app()
+        with mock.patch("musicplayer.ui.drive_list_public",
+                        side_effect=DriveError("Drive HTTP 404")), \
+                mock.patch("musicplayer.ui.drive_get_cached", return_value=None):
+            app._drive_refresh()
+        self.assertIn("404", app.status)
+
+    def test_friendly_error_maps_network_to_wifi(self):
+        app = self._app()
+        self.assertEqual(app._drive_friendly_error("Drive network: down"),
+                         "Connect Wi-Fi, then try again")
+        self.assertEqual(app._drive_friendly_error("Drive HTTP 404"), "Drive HTTP 404")
+
+    def test_empty_screen_states(self):
+        app = self._app()
+        texts = []
+        app.text = lambda *args, **kwargs: texts.append(args[0])
+        app.fill = lambda *args: None
+        app.measure = lambda *args, **kwargs: (10, 10)
+        app.ellipsize = lambda text, *args, **kwargs: text
+        app.drive_loaded = False
+        app._render_drive()
+        blob = "\n".join(texts)
+        self.assertIn("No cached Drive data", blob)
+        self.assertIn("Wi-Fi", blob)
+        texts.clear()
+        app.drive_loaded = True
+        app._render_drive()
+        blob = "\n".join(texts)
+        self.assertIn("empty", blob)
+
+
 if __name__ == "__main__":
     unittest.main()
