@@ -154,7 +154,7 @@ class RenderSmokeTests(unittest.TestCase):
         self._render("library")
 
     def test_download_progress_over_every_screen(self):
-        """Thanh % phai che duoc tren ca man hinh ma khong nem."""
+        """Thanh % phai ve duoc tren ca man hinh ma khong nem."""
         job = drive_module.StreamJob("F1", "Bai hat", 1000, "stream")
         job.update(400)
         for screen in ("library", "playing", "lyrics", "addrive"):
@@ -162,6 +162,86 @@ class RenderSmokeTests(unittest.TestCase):
                 self.app.download_job = job
                 self._render(screen)
         self.app.download_job = None
+
+    def test_never_paints_the_whole_screen_while_downloading(self):
+        """Lop phu trang toan man hinh la thu pham, khong duoc quay lai."""
+        job = drive_module.StreamJob("F1", "Bai hat", 1000, "stream")
+        job.update(400)
+        for screen in ("library", "playing", "lyrics", "addrive"):
+            with self.subTest(screen=screen):
+                self.app.fill.reset_mock()
+                self.app.download_job = job
+                self._render(screen)
+                opaque = [call for call in self.app.fill.call_args_list
+                          if call.args[:4] == (0, 0, 1024, 768)]
+                self.assertEqual(opaque, [])
+        self.app.download_job = None
+
+    def test_offline_job_progress_renders_inside_drive_row(self):
+        """Bai dang tai: % ve ngay trong dong cua list Drive."""
+        self.app.library_mode = "drive"
+        self.app.drive_stack = [("F1", "Drive 2")]
+        target = DriveEntry(file_id="F1", name="Bai dang tai.mp3", mime_type="",
+                            size=1000, is_folder=False, title="Bai dang tai",
+                            extension=".mp3")
+        self.app.drive_entries = [target]
+        job = drive_module.StreamJob("offline:/x/Bai dang tai.mp3", "Bai dang tai",
+                                     1000, "offline", entry=target)
+        job.update(250)
+        self.app.download_job = job
+        self.drawn.clear()
+        with mock.patch("musicplayer.ui.drive_find_offline_copy", return_value=""):
+            self._render("library")
+        self.assertIn("25%", self.drawn)
+        self.assertIn("Bai dang tai", self.drawn)
+        # Khong ve dai "SAVING TO DEVICE" duoi header khi da co dong khop.
+        self.assertNotIn("SAVING TO DEVICE", self.drawn)
+        self.app.download_job = None
+
+    def test_offline_job_progress_renders_inside_local_row(self):
+        """Bai trong thu vien local cung ve % tai dong cua no."""
+        self.app.library_mode = "all"
+        job = drive_module.StreamJob("offline:/x/song.mp3", "song", 1000,
+                                     "offline", entry=DriveEntry(
+                                         file_id="F1", name="song.mp3",
+                                         mime_type="", size=1000, is_folder=False,
+                                         title="song", extension=".mp3"))
+        job.update(750)
+        self.app.download_job = job
+        self.drawn.clear()
+        self._render("library")
+        self.assertIn("75%", self.drawn)
+        self.assertNotIn("SAVING TO DEVICE", self.drawn)
+        self.app.download_job = None
+
+    def test_download_strip_shows_when_no_row_matches(self):
+        """Dang phat Drive (man hinh PLAYING) -> dai nho, khong che man hinh."""
+        job = drive_module.StreamJob("offline:/x/song.mp3", "song", 1000,
+                                     "offline", entry=DriveEntry(
+                                         file_id="F1", name="song.mp3",
+                                         mime_type="", size=1000, is_folder=False,
+                                         title="song", extension=".mp3"))
+        job.update(120)
+        self.app.download_job = job
+        self.drawn.clear()
+        self._render("playing")
+        self.assertIn("SAVING TO DEVICE", self.drawn)
+        self.assertIn("12%", self.drawn)
+        self.app.download_job = None
+
+    def test_toast_waits_its_turn_while_a_download_runs(self):
+        """Hai thong bao khong duoc de len nhau duoi header."""
+        self.app._saved_toast = ("Bai vua luu", time.monotonic())
+        job = drive_module.StreamJob("F1", "Khac", 1000, "stream")
+        self.app.download_job = job
+        self.drawn.clear()
+        self._render("playing")
+        self.assertNotIn("SAVED", " ".join(self.drawn))
+        self.assertEqual(self.app._toast_width(), 0)
+        self.app.download_job = None
+        self.drawn.clear()
+        self._render("playing")
+        self.assertIn("SAVED", " ".join(self.drawn))
 
     def test_saved_toast_on_every_screen(self):
         self.app._saved_toast = ("Album / Bai hat rat co ten dai hon", time.monotonic())

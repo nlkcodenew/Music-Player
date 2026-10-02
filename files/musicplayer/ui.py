@@ -1659,7 +1659,7 @@ class MusicPlayerApp:
         existing = self._existing_offline_copy(entry)
         if existing:
             self._note_saved(entry, existing)
-            self.status = "Already on this device - %s" % self._short_saved_name(entry, existing)
+            self.status = "Already saved: %s" % self._short_saved_name(entry, existing)
             self.status_error = False
             get_logger().info("drive offline already present=%s", existing)
             return existing
@@ -1683,18 +1683,13 @@ class MusicPlayerApp:
         return job.path or None
 
     def _short_saved_name(self, entry, destination="", album=""):
-        """Ten ngan de hien tren man hinh (duong dan day du qua dai)."""
+        """CHI ten bai da luu - khong kem duong dan hay ten thu muc.
+
+        Duong dan `/mnt/SDCARD/Music/Drive/<Thu muc>/<bai>.mp3` qua dai lam
+        manhinh cat mat ca ten bai, nen thong bao chi giu lai ten bai.
+        """
         title = getattr(entry, "title", "") or (destination and os.path.basename(destination))
-        title = str(title).rsplit(".", 1)[0]
-        album = album or getattr(entry, "album", "")
-        if not album:
-            try:
-                album = self._drive_album_label()
-            except Exception:
-                album = ""
-        if album and album != "Drive":
-            return "%s / %s" % (album, title)
-        return title
+        return str(title).rsplit(".", 1)[0]
 
     def _note_saved(self, entry, destination, album=""):
         self._saved_toast = (self._short_saved_name(entry, destination, album),
@@ -1899,25 +1894,27 @@ class MusicPlayerApp:
         toast = getattr(self, "_saved_toast", None)
         if not toast:
             return 0
+        if getattr(self, "download_job", None) is not None:
+            return 0
         if time.monotonic() - toast[1] > 8.0:
             return 0
-        label = str(toast[0])
-        if len(label) > 64:
-            label = label[:61] + "..."
+        label = self.ellipsize(str(toast[0]), self.width - 160, "small")
         return self.measure("SAVED  %s" % label, "small")[0] + 28 + 24 + 8
 
     def _render_saved_toast(self):
-        """Dong 'da luu: <ten ngan>' ngay duoi tieu de (duong dan qua dai)."""
+        """Dong 'SAVED <ten bai>' ngay duoi tieu de (chi ten, khong duong dan)."""
         toast = getattr(self, "_saved_toast", None)
         if not toast:
+            return
+        # Dang tai bai moi thi dai progress chiem cho nay; bao "da luu" lai
+        # cho den khi tai xong, khong de hai thong bao de len nhau.
+        if getattr(self, "download_job", None) is not None:
             return
         label, at = toast
         if time.monotonic() - at > 8.0:
             self._saved_toast = None
             return
-        label = str(label)
-        if len(label) > 64:
-            label = label[:61] + "..."
+        label = self.ellipsize(str(label), self.width - 160, "small")
         text = "SAVED  %s" % label
         font = "small"
         width = self.measure(text, font)[0] + 28
@@ -1927,33 +1924,120 @@ class MusicPlayerApp:
         self.text(text, x + 14, 76, font, self.TEXT)
 
     def _render_download_progress(self):
-        """Thanh % khi tai tu Drive. Luon co nut B de huy."""
+        """Thanh %: uu tien ve ngay trong dong dang tai cua list.
+
+        Chi khi khong tim thay dong nao (vd: dang tam buffer de phat bai Drive
+        o man hinh PLAYING) moi ve mot dai nho sat duoi header - KHONG phu
+        trang man hinh nhu truoc.
+        """
         job = getattr(self, "download_job", None)
         if job is None:
             return
-        percent = int(job.percent * 100)
-        block_w = max(320, self.width - 160)
-        block_h = 74
-        x = (self.width - block_w) // 2
-        y = self.height - 140
-        self.fill(0, 0, self.width, self.height, self.BG)
-        self.fill(x, y, block_w, block_h, self.PANEL)
-        self.fill(x, y, 4, block_h, self.ACCENT)
-        caption = "DOWNLOADING" if job.kind == "offline" else "BUFFERING"
-        self.text(caption, x + 18, y + 8, "small", self.MUTED)
-        self.text("%d%%" % percent, x + block_w - 70, y + 8, "small", self.ACCENT)
-        title = self.ellipsize(job.title or "", block_w - 36, "small")
-        self.text(title, x + 18, y + 26, "small", self.TEXT)
-        bar_x, bar_y = x + 18, y + 50
-        bar_w = block_w - 36
-        self.fill(bar_x, bar_y, bar_w, 10, self.TRACK)
-        if percent > 0:
-            self.fill(bar_x, bar_y, max(10, int(bar_w * job.percent)), 10, self.ACCENT)
-        note = "%s / %s   -   B cancel" % (
+        if self._download_drawn_in_row():
+            return
+        self._render_download_strip(job)
+
+    def _download_drawn_in_row(self):
+        """Thanh % da duoc ve trong mot dong cua list dang xem chua."""
+        job = getattr(self, "download_job", None)
+        if job is None or job.done:
+            return False
+        if getattr(self, "screen", "") != "library":
+            return False
+        mode = getattr(self, "library_mode", "")
+        if mode == "drive":
+            rows = self._drive_rows()
+        elif mode == "source":
+            return False
+        else:
+            rows = self._library_entries()
+        return any(self._download_job_for_row(row) is not None for row in rows)
+
+    def _download_job_for_row(self, row):
+        """Job tai offline dang chay cho dung dong nay, hoac None."""
+        job = getattr(self, "download_job", None)
+        if job is None or job.done or job.kind != "offline":
+            return None
+        entry = getattr(job, "entry", None)
+        if entry is None:
+            return None
+        row_id = getattr(row, "file_id", "")
+        if row_id:
+            return job if row_id == getattr(entry, "file_id", "") else None
+        # Dong thu vien local: doi ten file (khong co file_id).
+        name = os.path.basename(str(getattr(row, "path", "") or ""))
+        if not name:
+            return None
+        return job if name == os.path.basename(str(getattr(entry, "name", "") or "")) else None
+
+    def _draw_inline_progress(self, job, x, y, width, selected):
+        """Ve % ngay trong dong dang tai: chu thiet o giua, thanh ben duoi.
+
+        Dong dang chon co nen xanh nen boi mau phai tuong phan: thanh nen toi,
+        phan da tai mau sang - neu dung nen trang thi nhin nho hu that voi
+        dong chon va mau chu phu bi chet.
+        """
+        percent = max(0, min(100, int(job.percent * 100)))
+        transferred = "Saving  %s / %s" % (
             drive_format_bytes(job.bytes),
             drive_format_bytes(job.total) if job.total > 0 else "?",
         )
-        self.text(note, bar_x, bar_y + 16, "small", self.MUTED)
+        if selected:
+            note_color, track_color, fill_color = (
+                self.ON_ACCENT, self.TEXT, self.ON_ACCENT,
+            )
+        else:
+            note_color, track_color, fill_color = (
+                self.ACCENT, self.TRACK, self.ACCENT,
+            )
+        note = "%d%%" % percent
+        note_width = self.measure(note, "body")[0]
+        self.text(
+            self.ellipsize(transferred, width - note_width - 16, "small"),
+            x, y + 22, "small", note_color,
+        )
+        self.text(note, x + width - note_width, y + 20, "body", note_color)
+        bar_width = max(40, width - note_width - 16)
+        ratio = max(0.0, min(1.0, job.percent))
+        self.fill(x, y + 36, bar_width, 7, track_color)
+        if ratio > 0:
+            self.fill(x, y + 36, max(6, int(bar_width * ratio)), 7, fill_color)
+
+    def _render_download_strip(self, job):
+        """Dai nho duoi header cho truong hop khong co dong nao de ve %."""
+        width = self.width - 56
+        x = 28
+        y = 72
+        height = 30
+        self.fill(x, y, width, height, self.PANEL)
+        self.fill(x, y, 4, height, self.ACCENT)
+        caption = "SAVING TO DEVICE" if job.kind == "offline" else "BUFFERING"
+        if job.kind != "offline":
+            caption += "  -  B cancel"
+        note = "%d%%" % max(0, min(100, int(job.percent * 100)))
+        transferred = "%s / %s" % (
+            drive_format_bytes(job.bytes),
+            drive_format_bytes(job.total) if job.total > 0 else "?",
+        )
+        caption_width = self.measure(caption, "small")[0]
+        note_width = self.measure(note, "small")[0]
+        transferred_width = self.measure(transferred, "small")[0]
+        self.text(caption, x + 14, y + 8, "small", self.MUTED)
+        self.text(note, x + width - 14 - note_width, y + 8, "small", self.ACCENT)
+        transferred_x = x + width - 14 - note_width - transferred_width - 16
+        self.text(transferred, transferred_x, y + 8, "small", self.MUTED)
+        title_x = x + 14 + caption_width + 10
+        title_room = transferred_x - title_x - 12
+        self.text(
+            self.ellipsize(job.title or "", max(40, title_room), "small"),
+            title_x, y + 8, "small", self.TEXT,
+        )
+        # Thanh % mong chay suot dai dai nho.
+        bar_y = y + height - 5
+        self.fill(x, bar_y, width, 4, self.TRACK)
+        ratio = max(0.0, min(1.0, job.percent))
+        if ratio > 0:
+            self.fill(x, bar_y, max(6, int(width * ratio)), 4, self.ACCENT)
 
     def _version_label(self):
         return "v%s | ID: %s" % (APP_VERSION, self.install_id)
@@ -2242,6 +2326,12 @@ class MusicPlayerApp:
                 self.ellipsize(title, self.width - 330 - spec_width, "body"),
                 32, y, "body", color,
             )
+            job = self._download_job_for_row(entry)
+            if job is not None:
+                # Bai dang chuyen ve may: % ngay tai dong nay.
+                self._draw_inline_progress(job, 32, y, self.width - 60, selected)
+                y += 52
+                continue
             detail = self.ellipsize(detail, 245, "small")
             detail_width = self.measure(detail, "small")[0]
             self.text(detail, self.width - 32 - detail_width - spec_width, y + 5, "small", dim_color)
@@ -2379,6 +2469,12 @@ class MusicPlayerApp:
                 self.ellipsize(title, self.width - 330 - spec_width, "body"),
                 32, y, "body", color,
             )
+            job = self._download_job_for_row(row)
+            if job is not None:
+                # Dang tai bai nay: ve % ngay trong dong, khong che man hinh.
+                self._draw_inline_progress(job, 32, y, self.width - 60, selected)
+                y += 52
+                continue
             detail = self.ellipsize(detail, 245, "small")
             detail_width = self.measure(detail, "small")[0]
             self.text(detail, self.width - 32 - detail_width - spec_width, y + 5, "small", dim_color)

@@ -265,7 +265,8 @@ class AppDownloadUiTests(unittest.TestCase):
             app._save_entry_offline(entry(), "Album")
         self.assertTrue(app._saved_toast[0])
         self.assertNotIn("/mnt/SDCARD", app._saved_toast[0])
-        self.assertIn("Album", app._saved_toast[0])
+        self.assertNotIn("/", app._saved_toast[0])
+        self.assertEqual(app._saved_toast[0], "song")
 
     def test_existing_copy_skips_download(self):
         app = self._app()
@@ -275,7 +276,7 @@ class AppDownloadUiTests(unittest.TestCase):
             app._save_entry_offline(entry(), "A")
         found.assert_called_once()
         start.assert_not_called()
-        self.assertIn("Already on this device", app.status)
+        self.assertIn("Already saved", app.status)
 
     def test_resolve_does_not_block_on_download(self):
         """Khong duoc tai trong thread chinh: phai start job roi CHO co ve khung."""
@@ -385,6 +386,7 @@ class AppDownloadUiTests(unittest.TestCase):
         self.assertIsNone(app._saved_toast)
 
     def test_progress_overlay_shows_percent_text(self):
+        """Khong co dong nao khop -> ve dai nho, khong phu trang man hinh."""
         app = self._app()
         app.width, app.height = 1024, 768
         job = StreamJob("F1", "song", 200, "stream")
@@ -393,10 +395,15 @@ class AppDownloadUiTests(unittest.TestCase):
         drawn = []
         app.fill = mock.Mock(side_effect=lambda *a: None)
         app.text = mock.Mock(side_effect=lambda t, *a, **k: drawn.append(t))
+        app.measure = mock.Mock(return_value=(60, 12))
         app.ellipsize = mock.Mock(side_effect=lambda t, *a, **k: t)
         app._render_download_progress()
         self.assertIn("50%", drawn)
-        self.assertIn("BUFFERING", drawn)
+        self.assertIn("BUFFERING  -  B cancel", drawn)
+        # KHONG duoc ve toan man hinh (nen trang chet nguoi lau).
+        full_screen = [c for c in app.fill.call_args_list
+                       if c.args[:2] == (0, 0) and c.args[2] == 1024 and c.args[3] == 768]
+        self.assertEqual(full_screen, [], "khong duoc phu trang ca man hinh")
 
     def test_progress_overlay_offline_says_downloading(self):
         app = self._app()
@@ -407,11 +414,109 @@ class AppDownloadUiTests(unittest.TestCase):
         drawn = []
         app.fill = mock.Mock(side_effect=lambda *a: None)
         app.text = mock.Mock(side_effect=lambda t, *a, **k: drawn.append(t))
+        app.measure = mock.Mock(return_value=(60, 12))
         app.ellipsize = mock.Mock(side_effect=lambda t, *a, **k: t)
         app._render_download_progress()
-        self.assertIn("DOWNLOADING", drawn)
+        self.assertIn("SAVING TO DEVICE", drawn)
         self.assertIn("100%", drawn)
-        self.assertIn("B cancel", " ".join(drawn))
+
+    def test_progress_goes_into_the_drive_row_not_the_strip(self):
+        """Dong dang tai ve % tai cho; khong ve dai nho duoi header."""
+        app = self._app()
+        app.width, app.height = 1024, 768
+        app.screen = "library"
+        app.library_mode = "drive"
+        app.scroll = 0
+        app.selection = 0
+        app.drive_page_token = ""
+        app.drive_busy = False
+        app.drive_loaded = True
+        app.drive_stack = [("F1", "Drive 2")]
+        target = entry(name="song.mp3")
+        app.drive_entries = [target]
+        job = StreamJob("offline:/x/song.mp3", "song", 200, "offline",
+                        entry=target)
+        job.update(100)
+        app.download_job = job
+        self.assertIs(app._download_job_for_row(target), job)
+        self.assertTrue(app._download_drawn_in_row())
+        drawn = []
+        app.fill = mock.Mock(side_effect=lambda *a: None)
+        app.text = mock.Mock(side_effect=lambda t, *a, **k: drawn.append(t))
+        app.measure = mock.Mock(return_value=(60, 12))
+        app._render_download_progress()
+        self.assertEqual(drawn, [], "da ve trong dong roi, khong ve them")
+        # Vao list thi % phai xuat hien ngay tren dong do.
+        drawn.clear()
+        with mock.patch("musicplayer.ui.drive_find_offline_copy", return_value=""):
+            app._render_drive()
+        self.assertIn("50%", drawn)
+
+    def test_other_drive_rows_keep_their_own_info(self):
+        """Chi dung bai dang tai co %; bai khac van hien ten + dung luong."""
+        app = self._app()
+        app.width, app.height = 1024, 768
+        app.screen = "library"
+        app.library_mode = "drive"
+        app.scroll = 0
+        app.selection = 0
+        app.drive_page_token = ""
+        app.drive_stack = [("F1", "Drive 2")]
+        target = entry(name="song.mp3")
+        other = entry(file_id="F2", name="khac.mp3")
+        app.drive_entries = [other, target]
+        job = StreamJob("offline:/x/song.mp3", "song", 200, "offline",
+                        entry=target)
+        job.update(50)
+        app.download_job = job
+        drawn = []
+        app.fill = mock.Mock(side_effect=lambda *a: None)
+        app.text = mock.Mock(side_effect=lambda t, *a, **k: drawn.append(t))
+        app.measure = mock.Mock(return_value=(60, 12))
+        with mock.patch("musicplayer.ui.drive_find_offline_copy", return_value=""):
+            app._render_drive()
+        self.assertIn("25%", drawn)
+        self.assertIn("khac", drawn)
+
+    def test_finished_job_is_not_matched_so_badge_returns(self):
+        app = self._app()
+        app.screen = "library"
+        app.library_mode = "drive"
+        app.drive_entries = []
+        target = entry(name="song.mp3")
+        job = StreamJob("offline:/x/song.mp3", "song", 200, "offline",
+                        entry=target)
+        job.done = True
+        app.download_job = job
+        self.assertIsNone(app._download_job_for_row(target))
+        self.assertFalse(app._download_drawn_in_row())
+
+    def test_local_library_row_matches_by_filename(self):
+        """Bai trong thu vien local khop bang ten tep (khong co file_id)."""
+        app = self._app()
+        app.screen = "library"
+        app.library_mode = "all"
+        job = StreamJob("offline:/x/song.mp3", "song", 200, "offline",
+                        entry=entry(name="song.mp3"))
+        app.download_job = job
+        from musicplayer.library import Track
+        self.assertIs(app._download_job_for_row(
+            Track(path="/mnt/SDCARD/Music/Drive/A/song.mp3", title="song",
+                  folder="A", extension=".mp3")), job)
+        self.assertIsNone(app._download_job_for_row(
+            Track(path="/mnt/SDCARD/Music/B/other.mp3", title="other",
+                  folder="B", extension=".mp3")))
+
+    def test_saved_message_has_no_path(self):
+        """Thong bao xong chi giu ten bai, khong lan duong dan vao."""
+        app = self._app()
+        long_path = ("/mnt/SDCARD/Music/Drive/Moi thu muc rat dai va co "
+                     "ten vo cung dai/Bai hat cua toi.mp3")
+        name = app._short_saved_name(entry(name=os.path.basename(long_path)),
+                                     long_path)
+        self.assertNotIn("/", name)
+        self.assertNotIn("\\", name)
+        self.assertEqual(name, "Bai hat cua toi")
 
 
 if __name__ == "__main__":
