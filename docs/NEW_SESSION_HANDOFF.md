@@ -1,5 +1,10 @@
 # New-session handoff — Music Player v1.6.3 (Buoc A done, next: Buoc B Drive)
 
+> ARCHIVE — file này mô tả trạng thái ở v1.6.3 và đã lỗi thời. Trạng thái
+> hiện tại xem `docs/PROJECT_STATUS.md`; bắt đầu phiên mới bằng
+> `docs/DEVELOPMENT.md` + `docs/DRIVE_OFFLINE.md`. Giữ file để tra cứu bước
+> A/B, không dùng để tiếp tục công việc.
+
 > Updated 2026-10-02. Read this file, `docs/PROJECT_STATUS.md` and
 > `docs/STEP_A_DONE.md` first. Buoc B plan lives in
 > `docs/VISUALS_AND_DRIVE_PLAN.md` section 5 (Buoc B).
