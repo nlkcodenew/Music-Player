@@ -1,6 +1,14 @@
 # LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.20.1**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.20.2**.
+
+## v1.20.2 — Crash reporting sớm + ổn định Drive
+
+- Sửa lỗi `SDL_KEYDOWN` chưa import khi hủy tải/phát Drive; chuyển đúng file
+  cache của bài Drive sang Background Playback.
+- Crash lúc mở app, lỗi import và process thoát bất thường luôn được lưu và
+  gửi qua relay khi có mạng, không phụ thuộc `Auto-report Errors`; launcher
+  và Python phối hợp để không tạo hai issue cho cùng một crash.
 
 ## v1.20.x — Hoàn thiện tải Drive
 

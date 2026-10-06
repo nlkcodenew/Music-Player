@@ -19,6 +19,7 @@ else
 fi
 LOG_FILE="$APP/music-player.log"
 SESSION_STDIO_LOG="$APP/data/music-player-session-stdio.log"
+CRASH_MARKER="$APP/data/crash-handled"
 export MUSIC_PLAYER_STDIO_LOG="$STDIO_LOG"
 export MUSIC_PLAYER_SESSION_STDIO_LOG="$SESSION_STDIO_LOG"
 export PYTHONUNBUFFERED=1
@@ -172,6 +173,7 @@ trap 'exit 143' TERM
 
 while true; do
     rm -f "$APP/.restart"
+    rm -f "$CRASH_MARKER"
     if [ -f "$STDIO_LOG" ] && [ "$(wc -c < "$STDIO_LOG" 2>/dev/null)" -gt 524288 ]; then
         mv -f "$STDIO_LOG" "$STDIO_LOG.1"
         echo "Music Player log rotated" > "$STDIO_LOG"
@@ -190,7 +192,13 @@ while true; do
     fi
     if [ "$STATUS" -ne 0 ]; then
         "$PYTHON" app.py --diagnose >> "$STDIO_LOG" 2>&1 || true
-        "$PYTHON" -m musicplayer.reporter --reason "exit_$STATUS" >> "$STDIO_LOG" 2>&1 || true
+        if [ "$STATUS" -eq 130 ] || [ "$STATUS" -eq 143 ]; then
+            "$PYTHON" -m musicplayer.reporter --retry-only >> "$STDIO_LOG" 2>&1 || true
+        elif [ -f "$CRASH_MARKER" ]; then
+            :
+        else
+            "$PYTHON" -m musicplayer.reporter --reason "launcher_exit_$STATUS" --mandatory >> "$STDIO_LOG" 2>&1 || true
+        fi
         sync 2>/dev/null || true
     else
         "$PYTHON" -m musicplayer.reporter --retry-only >> "$STDIO_LOG" 2>&1 || true

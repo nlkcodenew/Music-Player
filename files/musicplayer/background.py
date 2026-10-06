@@ -45,6 +45,15 @@ def save_background_session(paths, player, sleep_timer):
     current = player.current
     if not current or not player.music:
         return False
+    resolved_path = getattr(player, "current_local_path", "")
+    current_path = resolved_path if isinstance(resolved_path, str) and resolved_path else current.path
+    track_paths = []
+    for track in player.tracks:
+        path = current_path if track is current else track.path
+        if os.path.isfile(path) and path not in track_paths:
+            track_paths.append(path)
+    if current_path not in track_paths:
+        return False
     sleep_value = None
     if sleep_timer.active:
         remaining = sleep_timer.remaining()
@@ -54,8 +63,8 @@ def save_background_session(paths, player, sleep_timer):
             "track_path": sleep_timer.track_path,
         }
     session = {
-        "tracks": [track.path for track in player.tracks if os.path.isfile(track.path)],
-        "current_path": current.path,
+        "tracks": track_paths,
+        "current_path": current_path,
         "position": player.position(),
         "paused": bool(player.runtime.Mix_PausedMusic()),
         "sleep_timer": sleep_value,

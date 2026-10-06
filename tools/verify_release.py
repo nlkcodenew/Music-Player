@@ -19,7 +19,7 @@ EXCLUDED = {
     "display-restore.json", "music-player.log", "music-player-stdio.log",
     "music-player-session.log", "music-player-session-stdio.log", "music-player-diagnostics.json",
     "background-session.json", "background-command", "background.pid",
-    "background-status.json", "background-resume.json",
+    "background-status.json", "background-resume.json", "crash-handled",
     "drive-cache.json",
 }
 TOKEN_MARKERS = (b"github_pat_", b"ghp_", b"MUSIC_PLAYER_GITHUB_TOKEN")

@@ -52,6 +52,7 @@ class AudioPlayer:
         self.last_state_log = 0.0
         self.analyser = SpectrumAnalyser()
         self.drive_resolver = None
+        self.current_local_path = ""
 
     def initialize(self):
         flags = MIX_INIT_FLAC | MIX_INIT_MP3 | MIX_INIT_OGG | MIX_INIT_OPUS
@@ -200,6 +201,7 @@ class AudioPlayer:
             return False
         self.music = music
         self.index = index
+        self.current_local_path = local_path
         self.started = True
         self.music_finished = False
         self.started_at = time.monotonic()

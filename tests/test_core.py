@@ -239,6 +239,19 @@ class ReporterTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(len(pending), 1)
 
+    def test_duplicate_crash_is_promoted_to_mandatory(self):
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(
+                pending_reports_file=os.path.join(root, "pending.json"),
+                log_file=os.path.join(root, "log.txt"),
+            )
+            queue_report(paths, "python_crash")
+            queue_report(paths, "python_crash", mandatory=True)
+            with open(paths.pending_reports_file, encoding="utf-8") as handle:
+                pending = json.load(handle)
+        self.assertEqual(len(pending), 1)
+        self.assertTrue(pending[0]["mandatory"])
+
     def test_installation_id_is_stable(self):
         with tempfile.TemporaryDirectory() as root:
             paths = mock.Mock(data_dir=root)
@@ -321,6 +334,31 @@ class ReporterTests(unittest.TestCase):
             with mock.patch("musicplayer.reporter._submit") as submit:
                 self.assertFalse(retry_pending(paths))
             submit.assert_not_called()
+
+    def test_mandatory_crash_retry_ignores_opt_in(self):
+        with tempfile.TemporaryDirectory() as root:
+            paths = mock.Mock(
+                app_dir=root,
+                settings_file=os.path.join(root, "settings.json"),
+                pending_reports_file=os.path.join(root, "pending.json"),
+            )
+            with open(paths.pending_reports_file, "w", encoding="utf-8") as handle:
+                json.dump([
+                    {"reason": "python_crash", "mandatory": True},
+                    {"reason": "drive_link_failed", "mandatory": False},
+                ], handle)
+            with mock.patch("musicplayer.reporter._report_configuration",
+                            return_value="https://reports.example.test/report"), \
+                    mock.patch("musicplayer.reporter._submit") as submit:
+                self.assertFalse(retry_pending(paths))
+            submit.assert_called_once_with(
+                paths,
+                {"reason": "python_crash", "mandatory": True},
+                "https://reports.example.test/report",
+            )
+            with open(paths.pending_reports_file, encoding="utf-8") as handle:
+                pending = json.load(handle)
+        self.assertEqual(pending, [{"reason": "drive_link_failed", "mandatory": False}])
 
 
 class UpdaterTests(unittest.TestCase):
@@ -783,6 +821,30 @@ class AudioLogicTests(unittest.TestCase):
         self.assertEqual(session["current_path"], second)
         self.assertEqual(session["position"], 42.5)
         self.assertEqual(session["sleep_timer"]["remaining"], 900)
+
+    def test_background_session_uses_resolved_drive_cache_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            cached = os.path.join(root, "stream-cache", "drive-song.mp3")
+            os.makedirs(os.path.dirname(cached))
+            with open(cached, "wb") as handle:
+                handle.write(b"audio")
+            paths = mock.Mock(data_dir=root)
+            current = mock.Mock(path="drive://FILEID1234567890/song.mp3")
+            player = mock.Mock(
+                current=current,
+                music=object(),
+                tracks=[current],
+                current_local_path=cached,
+            )
+            player.position.return_value = 12.0
+            player.runtime.Mix_PausedMusic.return_value = 0
+
+            self.assertTrue(save_background_session(paths, player, SleepTimer()))
+            with open(os.path.join(root, "background-session.json"), encoding="utf-8") as handle:
+                session = json.load(handle)
+
+        self.assertEqual(session["tracks"], [cached])
+        self.assertEqual(session["current_path"], cached)
 
     def test_background_status_is_resume_fallback_after_forced_stop(self):
         with tempfile.TemporaryDirectory() as root:

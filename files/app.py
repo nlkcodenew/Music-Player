@@ -76,7 +76,10 @@ if __name__ == "__main__":
                 paths.log_file, getattr(paths, "session_log_file", None), append_session=True
             )
             get_logger().error("unhandled crash\n%s", error)
-            queue_report(paths, "python_crash")
+            queue_report(paths, "python_crash", mandatory=True)
+            with open(os.path.join(paths.data_dir, "crash-handled"), "w", encoding="ascii") as handle:
+                handle.write("python_crash\n")
+            retry_pending(paths)
         except Exception:
             sys.stderr.write(error)
         sys.exit(1)

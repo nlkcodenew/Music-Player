@@ -81,7 +81,7 @@ def _session_log(paths):
     return "\n".join(value for value in chunks if value)[-limit:]
 
 
-def queue_report(paths, reason, detail="", unique=False):
+def queue_report(paths, reason, detail="", unique=False, mandatory=False):
     pending = _read_json(paths.pending_reports_file, [])
     if not isinstance(pending, list):
         pending = []
@@ -96,6 +96,9 @@ def queue_report(paths, reason, detail="", unique=False):
         None,
     )
     if existing:
+        if mandatory and not existing.get("mandatory"):
+            existing["mandatory"] = True
+            atomic_json_write(paths.pending_reports_file, pending[-MAX_PENDING:])
         return existing.get("fingerprint", "")
     session_log = _session_log(paths)
     fingerprint_source = "%s\n%s\n%s" % (identity, detail, session_log[-8000:])
@@ -108,6 +111,7 @@ def queue_report(paths, reason, detail="", unique=False):
         "fingerprint": fingerprint,
         "identity": identity,
         "session_log": session_log,
+        "mandatory": bool(mandatory),
     })
     atomic_json_write(paths.pending_reports_file, pending[-MAX_PENDING:])
     return fingerprint
@@ -144,7 +148,11 @@ def _report_configuration(paths):
 
 
 def _reporting_enabled(paths):
-    return bool(Settings(paths.settings_file).load().get("auto_report_errors"))
+    try:
+        return bool(Settings(paths.settings_file).load().get("auto_report_errors"))
+    except Exception as error:
+        get_logger().warning("cannot read automatic reporting setting: %s", error)
+        return False
 
 
 def _post_json(paths, relay_url, payload):
@@ -235,13 +243,17 @@ def retry_pending(paths, force=False):
     pending = _read_json(paths.pending_reports_file, [])
     if not isinstance(pending, list) or not pending:
         return False
-    if not force and not _reporting_enabled(paths):
-        return False
+    reporting_enabled = force or _reporting_enabled(paths)
     relay_url = _report_configuration(paths)
     if not relay_url:
         return False
     remaining = []
     for item in pending:
+        if not reporting_enabled and not (
+            isinstance(item, dict) and item.get("mandatory")
+        ):
+            remaining.append(item)
+            continue
         try:
             _submit(paths, item, relay_url)
         except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError) as error:
@@ -261,8 +273,8 @@ def main():
     paths.ensure_writable_dirs()
     init_logging(paths.log_file)
     if "--retry-only" not in sys.argv:
-        queue_report(paths, reason)
-    retry_pending(paths)
+        queue_report(paths, reason, mandatory="--mandatory" in sys.argv)
+    retry_pending(paths, force="--force" in sys.argv)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Self-contained music player for TrimUI Brick Pro Stock OS and Spruce OS
 (Smart Pro S). No NextUI libraries required, no hidden directory at the
 SD-card root.
 
-## Highlights (v1.20.1)
+## Highlights (v1.20.2)
 
 - Recursive SD-card scan for WAV, MP3, OGG, FLAC, OPUS — plays through the
   firmware SDL2_mixer with full controller navigation.
@@ -24,8 +24,9 @@ SD-card root.
   fallback; Bluetooth/BlueALSA support.
 - In-place OTA updates over verified TLS (SHA-256, atomic writes).
 - Diagnostics via a credential-free HTTPS relay — no GitHub token ever lives
-  in the app, ZIP, manifest, SD card, or request URL. Auto-reporting is off
-  by default.
+  in the app, ZIP, manifest, SD card, or request URL. Fatal crashes are
+  reported automatically when online (or queued until the next launch);
+  non-fatal automatic error reporting remains off by default.
 
 AAC/M4A, album art, online lyrics/translation, radio, podcasts and crossfade
 are not included.
