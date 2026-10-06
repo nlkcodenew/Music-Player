@@ -1,6 +1,12 @@
-# LỊCH SỬ BẢN — Music Player
+﻿# LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.0**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.2**.
+
+## v1.21.2 — Sửa crash ALSA khi mở audio
+
+- Thêm `audio_probe`: mở thử audio trong tiến trình con trước khi mở thật.
+  Nếu thử bị abort do `snd_mask_leave`/ALSA assertion, app tiếp tục đánh dấu
+  audio unavailable thay vì văng app. Launcher xuất `MUSIC_PLAYER_AUDIO_PROBE=1`.
 
 ## v1.21.0 — Xóa Drive hỏng + tải theo album + playlist + tải cả thư mục
 

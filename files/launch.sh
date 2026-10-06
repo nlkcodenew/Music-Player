@@ -41,6 +41,9 @@ if ! cd "$APP" 2>> "$STDIO_LOG"; then
 fi
 
 export PATH="$SDCARD_PATH/System/bin:$PATH"
+# Probe audio with a child process before opening it: some ALSA devices
+# otherwise abort the whole app with a mask_inline/ALSA assertion.
+export MUSIC_PLAYER_AUDIO_PROBE=1
 if [ -d "$SDCARD_PATH/spruce" ]; then
     export MUSIC_PLAYER_OS=spruce
     SPRUCE_SDL_PATH="$SDCARD_PATH/spruce/brick/sdl2"

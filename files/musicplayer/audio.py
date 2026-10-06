@@ -1,5 +1,8 @@
 import ctypes
+import os
 import random
+import subprocess
+import sys
 import time
 
 from .audio_output import choose_audio_device
@@ -114,7 +117,76 @@ class AudioPlayer:
         self.finished_callback = finished
         hook(ctypes.cast(finished, ctypes.c_void_p))
 
+    def _audio_probe(self, device):
+        """Open audio in a child first so ALSA aborts cannot crash the app."""
+        if os.environ.get("MUSIC_PLAYER_AUDIO_PROBE", "") != "1":
+            return None
+        try:
+            app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        except Exception:
+            return None
+        env = os.environ.copy()
+        env.setdefault("MUSIC_PLAYER_AUDIO_PROBE", "0")
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-m", "musicplayer.audio_probe", device or "default", app_dir],
+                cwd=app_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except Exception as error:
+            get_logger().warning("audio probe failed: %s", error)
+            return None
+        output = (completed.stdout or "") + (completed.stderr or "")
+        if completed.returncode == 0:
+            for line in output.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 3 and parts[0] == "OK":
+                    try:
+                        return int(parts[1]), int(parts[2]), output
+                    except ValueError:
+                        pass
+            return None
+        if completed.returncode < 0:
+            get_logger().warning("audio probe aborted like an ALSA assertion: %s", output)
+            return (None, None, output or "aborted")
+        return (None, None, output)
+
     def _open_audio(self, device, attempts):
+        probe = self._audio_probe(device)
+        if probe is not None and probe[0] is not None:
+            frequency, buffer_size, _output = probe
+            # Probe discovered a safe config, open only that one.
+            encoded = device.encode("utf-8") if device else None
+            allowed_changes = SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE
+            if self.runtime.Mix_OpenAudioDevice:
+                result = self.runtime.Mix_OpenAudioDevice(
+                    frequency, AUDIO_S16SYS, 2, buffer_size, encoded, allowed_changes
+                )
+            else:
+                result = self.runtime.Mix_OpenAudio(
+                    frequency, AUDIO_S16SYS, 2, buffer_size
+                )
+            if result == 0:
+                get_logger().info(
+                    "audio open succeeded device=%s frequency=%d buffer=%d",
+                    device or "default", frequency, buffer_size,
+                )
+                return True
+            error = self.runtime.error()
+            attempts.append("%s %d/%d (after probe): %s" % (
+                device or "default", frequency, buffer_size, error,
+            ))
+            get_logger().warning("audio open failed after probe: %s", attempts[-1])
+            return False
+        if probe is not None:
+            # Probe already proved this configuration cannot open; don't
+            # call it again in-process (an ALSA assert would kill the app).
+            attempts.append("probe: %s" % probe[2])
+            get_logger().warning("audio open blocked by probe: %s", probe[2])
+            return False
         encoded = device.encode("utf-8") if device else None
         allowed_changes = SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE
         for frequency, buffer_size in AUDIO_CONFIGS:
