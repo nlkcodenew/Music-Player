@@ -53,12 +53,20 @@ else
     export MUSIC_PLAYER_OS=stock
     export LD_LIBRARY_PATH="$APP/libs:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:/usr/lib64:/usr/lib:/lib:$LD_LIBRARY_PATH"
     export PYSDL2_DLL_PATH="$APP/libs:$SDCARD_PATH/System/lib:/usr/trimui/lib:/usr/lib64:/usr/lib"
+    if [ -x /usr/bin/bluealsa-aplay ] \
+        && /usr/bin/bluealsa-aplay -L 2>/dev/null | grep -q 'playback' \
+        && [ -f /usr/lib/libasound.so.2 ]; then
+        export AUDIODEV=bluealsa
+        export LD_PRELOAD="/usr/lib/libasound.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
+    fi
 fi
 {
     echo "os=$MUSIC_PLAYER_OS"
     echo "platform=${PLATFORM:-unknown}"
+    echo "audio_device=${AUDIODEV:-default}"
     echo "PYSDL2_DLL_PATH=$PYSDL2_DLL_PATH"
     echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+    echo "LD_PRELOAD=${LD_PRELOAD:-none}"
 } >> "$STDIO_LOG" 2>&1
 
 usable_python() {

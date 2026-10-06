@@ -1,2 +1,2 @@
 APP_NAME = "Music Player"
-APP_VERSION = "1.21.3"
+APP_VERSION = "1.21.4"

@@ -1,8 +1,8 @@
 {
-  "version": "1.21.3",
+  "version": "1.21.4",
   "app": "trimui-music-player",
-  "release_ref": "v1.21.3",
-  "base_url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.3/files",
+  "release_ref": "v1.21.4",
+  "base_url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.4/files",
   "files": [
     {
       "path": "THIRD_PARTY_NOTICES.txt",
@@ -16,8 +16,8 @@
     },
     {
       "path": "launch.sh",
-      "sha256": "7ddcd7f2787bdbff437dc45fb4c04ddd6af84a01b5f523149c2c01faef70deae",
-      "size": 7139
+      "sha256": "e27151c84235e52b1043f068ea9a7f8d721b6c109bf4f0b8d2a8398642f0b43b",
+      "size": 7506
     },
     {
       "path": "release.json",
@@ -81,13 +81,13 @@
     },
     {
       "path": "musicplayer/__init__.py",
-      "sha256": "0f99cd1f5fef6959bef282bc6d2df52dbf1d94335ecf7264c2a912093784291c",
+      "sha256": "ffefa8da19b396f4acde27f1a06d77fa87de45492a1eba628f92faf4af3b771c",
       "size": 49
     },
     {
       "path": "musicplayer/audio.py",
-      "sha256": "b5c467703ee4bc4ddea1087481112ca2d7adbd91afb17609181b518c9152a727",
-      "size": 18207
+      "sha256": "ee27ad437aee647aa5e1bd109e1c940ee4906f51dccd85c40acef1fdc89b95d5",
+      "size": 18920
     },
     {
       "path": "musicplayer/audio_format.py",
@@ -573,25 +573,25 @@
       "path": "certs/cacert.pem",
       "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9",
       "size": 188900,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.3/assets/cacert.pem"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.4/assets/cacert.pem"
     },
     {
       "path": "config.json",
       "sha256": "88ca226e4119a5b356275820b836bf84c4c8e188dcc1383201d174ca0447fe5e",
       "size": 102,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.3/assets/config.json"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.4/assets/config.json"
     },
     {
       "path": "icon.png",
       "sha256": "df4f2ee9aec763c26d1262a39b4d395eeada0d1b1fdf33d1ef9339d28a36a723",
       "size": 10989,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.3/assets/icon.png"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.4/assets/icon.png"
     },
     {
       "path": "LICENSE.txt",
       "sha256": "c5932e63588c9fc195c782acb2cd69b196f501d3b9189c7e21e538ad1c58c835",
       "size": 1074,
-      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.3/LICENSE"
+      "url": "https://raw.githubusercontent.com/nlkcodenew/Music-Player/v1.21.4/LICENSE"
     }
   ]
 }

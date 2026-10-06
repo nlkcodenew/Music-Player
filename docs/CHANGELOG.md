@@ -1,6 +1,16 @@
 ﻿# LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.3**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.4**.
+
+## v1.21.4 — Sửa phát nhạc Bluetooth BlueALSA trên Stock OS
+
+- Khi soundbar/tai nghe A2DP đang kết nối, launcher phát hiện PCM playback của
+  BlueALSA và đặt `AUDIODEV=bluealsa` để SDL mở đúng ngõ Bluetooth.
+- Ép dùng `libasound.so.2` của firmware cho BlueALSA; tránh xung đột ABI giữa
+  ALSA đóng kèm và plugin firmware gây abort `snd_mask_leave` hoặc báo
+  `Audio unavailable`.
+- Nếu Bluetooth không hoạt động, app giữ nguyên đường loa trong/USB DAC; thêm
+  fallback sang thiết bị SDL đã liệt kê và probe riêng từng cấu hình audio.
 
 ## v1.21.3 — Lọc lại probe audio: chỉ chặn khi probe abort, lỗi thường vẫn thử mở thật
 

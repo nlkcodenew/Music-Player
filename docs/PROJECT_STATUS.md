@@ -1,4 +1,4 @@
-# Music Player — project status v1.21.3
+# Music Player — project status v1.21.4
 
 > Updated 2026-10-06. Toàn bộ tài liệu hiện tại: `README.md` (tổng quan),
 > `docs/USER_GUIDE.md` (người dùng), `docs/DRIVE_OFFLINE.md` (kiến trúc
@@ -10,11 +10,11 @@
 
 | Item | Value |
 |---|---|
-| Latest release | `v1.21.3` |
-| Release page | `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.21.3` |
+| Latest release | `v1.21.4` |
+| Release page | `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.21.4` |
 | Package | One universal ZIP for Stock + Spruce |
 | Runtime | Bundled Python 3.10 AArch64 + native dependency closure |
-| Unit tests | 242/242 passed (\	est_core\ + \	est_drive_download\ + \	est_render_smoke\ + \	est_features_v121\) |
+| Unit tests | 243/243 passed (`test_core` + `test_drive_download` + `test_render_smoke` + `test_features_v121`) |
 
 Public release gồm `ota-manifest.json`, một universal ZIP + SHA-256 sidecar.
 Cổng kiểm tra local: version, hash, số entry, quyền file, cấm token marker,
@@ -66,6 +66,6 @@ git diff --check
 
 ## Session close
 
-- `v1.21.3` là OTA + GitHub latest sau khi release upload hoàn tất.
+- `v1.21.4` là OTA + GitHub latest sau khi release upload hoàn tất.
 - Lỗi máy Stock firmware cũ không có Python 3.8+ đã được loại bỏ bằng runtime
   self-contained; không cần PortMaster hay cập nhật firmware để mở app.

@@ -81,6 +81,19 @@ class AudioPlayer:
         if not self.audio_ready:
             self.audio_ready = self._open_audio(None, attempts)
         if not self.audio_ready:
+            # Khi Bluetooth/A2DP đang chiếm ALSA default, thử trực tiếp các
+            # thiết bị SDL còn lại. Đệm lỗi ở đây để
+            # app vẫn chạy và nghe loa thay vì báo Audio unavailable.
+            for raw_name in devices:
+                clean = str(raw_name or "").strip().rstrip(",").strip()
+                if not clean or clean == "default":
+                    continue
+                self.audio_ready = self._open_audio(clean, attempts)
+                if self.audio_ready:
+                    self.output_device = clean
+                    get_logger().info("audio fallback to device=%s", clean)
+                    break
+        if not self.audio_ready:
             detail = attempts[-1] if attempts else self.runtime.error()
             self.output_warning = "Audio unavailable; disconnect/reconnect output and restart"
             self.error = self.output_warning

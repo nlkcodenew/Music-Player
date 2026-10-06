@@ -11,7 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = os.path.join(ROOT, "files")
 sys.path.insert(0, FILES)
 
-from musicplayer.audio import AudioPlayer
+from musicplayer.audio import AUDIO_CONFIGS, AudioPlayer
 from musicplayer.background import load_resume, save_background_session
 from musicplayer import APP_VERSION
 from musicplayer.audio_output import choose_audio_device, is_usb_audio_device
@@ -803,6 +803,15 @@ class AudioLogicTests(unittest.TestCase):
         self.assertFalse(player.audio_ready)
         self.assertIn("Audio unavailable", player.output_warning)
         self.assertFalse(player.play(0))
+
+    def test_audio_falls_back_to_an_enumerated_device(self):
+        runtime = FakeAudioRuntime([-1] * len(AUDIO_CONFIGS) + [0])
+        runtime.audio_devices = mock.Mock(return_value=["audiocodec, "])
+        player = AudioPlayer(runtime, [], self.audio_settings())
+
+        self.assertTrue(player.initialize())
+        self.assertEqual(player.output_device, "audiocodec")
+        self.assertEqual(runtime.attempts[-1][2], b"audiocodec")
 
     def test_transient_not_playing_state_does_not_restart_with_finished_hook(self):
         runtime = FakeRuntime()

@@ -22,7 +22,7 @@ from .sdl_runtime import (
 )
 
 
-def probe(device, app_dir):
+def probe(device, app_dir, only=None):
     paths = RuntimePaths.discover(app_dir=app_dir, environ=os.environ)
     runtime = SDLRuntime(paths)
     flags = MIX_INIT_FLAC | MIX_INIT_MP3 | MIX_INIT_OGG | MIX_INIT_OPUS
@@ -39,7 +39,14 @@ def probe(device, app_dir):
             SDL_AUDIO_ALLOW_SAMPLES_CHANGE,
         )
         allowed = SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE
-        for frequency, buffer_size in AUDIO_CONFIGS:
+        configs = AUDIO_CONFIGS
+        if only is not None:
+            try:
+                freq, buf = int(only[0]), int(only[1])
+                configs = [config for config in configs if config == (freq, buf)] or AUDIO_CONFIGS
+            except Exception:
+                configs = AUDIO_CONFIGS
+        for frequency, buffer_size in configs:
             if runtime.Mix_OpenAudioDevice:
                 result = runtime.Mix_OpenAudioDevice(
                     frequency, AUDIO_S16SYS, 2, buffer_size, encoded, allowed
@@ -71,9 +78,12 @@ def probe(device, app_dir):
 
 def main(argv):
     if len(argv) < 3:
-        print("usage: audio_probe.py <device> <app_dir>")
+        print("usage: audio_probe.py <device> <app_dir> [freq buffer]")
         return 2
-    return probe(argv[1], argv[2])
+    only = None
+    if len(argv) >= 5:
+        only = (argv[3], argv[4])
+    return probe(argv[1], argv[2], only)
 
 
 if __name__ == "__main__":

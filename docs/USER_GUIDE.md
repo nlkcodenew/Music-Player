@@ -149,7 +149,7 @@ yêu thích, log **không bao giờ bị xóa** khi cập nhật.
 | Không có tiếng | Quick Menu → Audio Output → System; rút DAC rồi mở lại app |
 | App báo AUDIO OFF | Firmware chưa mở được audio — thoát app dùng audio khác rồi mở lại |
 | Thẻ báo đầy | Quick Menu → Clear Drive cache (bộ đệm stream tối đa 1 GB, tự xóa cũ nhất) |
-| App văng khi mở audio / log có `snd_mask_leave` | Đã sửa từ v1.21.2–v1.21.3: probe audio chạy trong tiến trình con; ALSA abort không còn làm văng app, sẽ báo `Audio unavailable` |
+| Kết nối Bluetooth nhưng báo `Audio unavailable` / log có `snd_mask_leave` | Cập nhật v1.21.4: app dùng PCM BlueALSA và ALSA hệ thống tương thích plugin firmware |
 
 ## 8. Lấy log gửi báo lỗi
 
