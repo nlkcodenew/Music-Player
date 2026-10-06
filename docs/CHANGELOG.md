@@ -1,6 +1,11 @@
 ﻿# LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.2**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.3**.
+
+## v1.21.3 — Lọc lại probe audio: chỉ chặn khi probe abort, lỗi thường vẫn thử mở thật
+
+- Lần v1.21.2 quá strict: probe Bluetooth/ALSA lỗi thường làm parent không thử mở thật nên có thể mất tiếng.
+- Probe vẫn chạy, nhưng chỉ trả “chặn” khi tiến trình con abort do ALSA assertion hoặc crash; lỗi `No such device`/busy/bluetooth không chặn luồng mở audio bình thường.
 
 ## v1.21.2 — Sửa crash ALSA khi mở audio
 

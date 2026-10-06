@@ -127,32 +127,44 @@ class AudioPlayer:
             return None
         env = os.environ.copy()
         env.setdefault("MUSIC_PLAYER_AUDIO_PROBE", "0")
-        try:
-            completed = subprocess.run(
-                [sys.executable, "-m", "musicplayer.audio_probe", device or "default", app_dir],
-                cwd=app_dir,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=20,
-            )
-        except Exception as error:
-            get_logger().warning("audio probe failed: %s", error)
-            return None
-        output = (completed.stdout or "") + (completed.stderr or "")
-        if completed.returncode == 0:
-            for line in output.splitlines():
-                parts = line.strip().split()
-                if len(parts) >= 3 and parts[0] == "OK":
-                    try:
-                        return int(parts[1]), int(parts[2]), output
-                    except ValueError:
-                        pass
-            return None
-        if completed.returncode < 0:
-            get_logger().warning("audio probe aborted like an ALSA assertion: %s", output)
-            return (None, None, output or "aborted")
-        return (None, None, output)
+        from .audio import AUDIO_CONFIGS
+        all_output = []
+        any_abort = False
+        for frequency, buffer_size in AUDIO_CONFIGS:
+            try:
+                completed = subprocess.run(
+                    [sys.executable, "-m", "musicplayer.audio_probe", device or "default", app_dir, str(frequency), str(buffer_size)],
+                    cwd=app_dir,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+            except Exception as error:
+                all_output.append("%d/%d: %s" % (frequency, buffer_size, error))
+                continue
+            output = (completed.stdout or "") + (completed.stderr or "")
+            if output.strip():
+                all_output.append("%d/%d: %s" % (frequency, buffer_size, output.strip()))
+            if completed.returncode == 0:
+                for line in output.splitlines():
+                    parts = line.strip().split()
+                    if len(parts) >= 3 and parts[0] == "OK":
+                        try:
+                            return int(parts[1]), int(parts[2]), "\n".join(all_output)
+                        except ValueError:
+                            pass
+                return (frequency, buffer_size, "\n".join(all_output))
+            if completed.returncode < 0:
+                get_logger().warning("audio probe aborted like an ALSA assertion: %s", output)
+                any_abort = True
+                continue
+        if any_abort:
+            return (None, None, "\n".join(all_output) or "aborted")
+        # Normal probe failures (busy device, no Bluetooth stream, No such
+        # device...) must not block the normal open attempts; only ALSA
+        # process aborts are dangerous.
+        return None
 
     def _open_audio(self, device, attempts):
         probe = self._audio_probe(device)
