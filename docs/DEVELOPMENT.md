@@ -50,6 +50,12 @@ test nào gọi `_render()` thật. Từ đó mọi code vẽ phải được sm
 trong đó có test **cố tình cấm** `fill(0,0,W,H)` khi đang tải (chống lớp phủ
 trắng toàn màn hình quay lại) và test badge với tên bài 56 ký tự.
 
+ALSA abort lesson: v1.21.2–v1.21.3 thêm `musicplayer/audio_probe.py` và
+`MUSIC_PLAYER_AUDIO_PROBE=1` trong `launch.sh` để thử mở audio trong tiến
+trình con. Nếu child abort với `snd_mask_leave: Assertion ...`, parent chặn
+luồng audio thật và đặt `Audio unavailable` thay vì để ALSA kill app; lỗi
+thường (busy, no device, chưa có Bluetooth PCM) vẫn thử mở audio thật.
+
 ## 3. Preview màn hình thật
 
 ```powershell
