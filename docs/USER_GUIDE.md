@@ -1,4 +1,4 @@
-# HƯỚNG DẪN SỬ DỤNG — Music Player v1.20.3
+# HƯỚNG DẪN SỬ DỤNG — Music Player v1.20.4
 
 > Dành cho người dùng cuối trên TrimUI Brick Pro (Stock OS) và Smart Pro S
 > (Spruce OS). Tài liệu kỹ thuật cho dev nằm ở `DRIVE_OFFLINE.md`,

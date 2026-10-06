@@ -1,6 +1,14 @@
 # LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.20.3**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.20.4**.
+
+## v1.20.4 — Stock OS FLAC decoder hotfix
+
+- Sửa thứ tự nạp thư viện trên Stock OS để luôn dùng `SDL2_mixer` đóng kèm có
+  decoder `dr_flac`, thay vì vô tình dùng bản firmware không hỗ trợ FLAC.
+- Loại bỏ cảnh báo `FLAC decoder unavailable` và lỗi
+  `Cannot decode / Unrecognized music format` khi mở file FLAC hợp lệ.
+- Vẫn giữ SDL2 video/audio của firmware ở ưu tiên cao để tương thích phần cứng.
 
 ## v1.20.3 — Universal self-contained Python runtime
 

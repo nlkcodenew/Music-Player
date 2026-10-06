@@ -17,7 +17,7 @@ from musicplayer import APP_VERSION
 from musicplayer.audio_output import choose_audio_device, is_usb_audio_device
 from musicplayer.collections import Collections
 from musicplayer.display import DisplayController
-from musicplayer.diagnostics import library_directories
+from musicplayer.diagnostics import LIBRARIES, library_candidates, library_directories
 from musicplayer.equalizer import Equalizer, preset_gains
 from musicplayer.identity import installation_id
 from musicplayer.library import natural_key, scan_library
@@ -113,6 +113,34 @@ class PathTests(unittest.TestCase):
         self.assertLess(directories.index(native_sdl), directories.index(bundled_sdl))
         self.assertLess(directories.index(native_sdl), directories.index(mali_runtime))
         self.assertLess(directories.index("/usr/lib"), directories.index(mali_runtime))
+
+    def test_stock_prefers_bundled_mixer_with_flac_decoder(self):
+        paths = mock.Mock(
+            app_dir="/sd/Apps/MusicPlayer",
+            sdcard_path="/sd",
+            os_name="stock",
+        )
+        candidates = library_candidates(paths, LIBRARIES["sdl2_mixer"])
+        self.assertEqual(
+            candidates[0],
+            os.path.join(paths.app_dir, "libs", "libSDL2_mixer-2.0.so.0"),
+        )
+        self.assertLess(
+            candidates.index(os.path.join(paths.app_dir, "libs", "libSDL2_mixer-2.0.so")),
+            candidates.index(os.path.join(paths.sdcard_path, "System", "lib", "libSDL2_mixer-2.0.so")),
+        )
+
+    def test_spruce_keeps_native_mixer_preference(self):
+        paths = mock.Mock(
+            app_dir="/sd/App/MusicPlayer",
+            sdcard_path="/sd",
+            os_name="spruce",
+        )
+        candidates = library_candidates(paths, LIBRARIES["sdl2_mixer"])
+        self.assertEqual(
+            candidates[0],
+            os.path.join("/sd", "spruce", "brick", "sdl2", "libSDL2_mixer-2.0.so.0"),
+        )
 
 
 class SettingsTests(unittest.TestCase):

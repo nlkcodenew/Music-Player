@@ -46,7 +46,13 @@ def library_directories(paths):
 
 def library_candidates(paths, names):
     candidates = []
-    for directory in library_directories(paths):
+    directories = library_directories(paths)
+    if paths.os_name == "stock" and names == LIBRARIES["sdl2_mixer"]:
+        app_libs = os.path.join(paths.app_dir, "libs")
+        directories = (app_libs,) + tuple(
+            directory for directory in directories if directory != app_libs
+        )
+    for directory in directories:
         candidates.extend(os.path.join(directory, name) for name in names[1:])
     found = ctypes.util.find_library(names[0])
     if found:
