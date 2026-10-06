@@ -21,7 +21,7 @@
 | `updater.py` | OTA: kiểm tra, tải, verify SHA-256, ghi atomic, không xóa user data |
 | `reporter.py` / `identity.py` | ID `MP-xxxxxxxx`, hàng đợi báo lỗi, relay HTTPS không token |
 | `display.py` / `leds.py` | Tắt/mở màn hình khi phát, LED theo phổ |
-| `sleep_timer.py` / `collections.py` | Hẹn giờ, yêu thích + playlist |
+| `sleep_timer.py` / `collections.py` | Hẹn giờ, yêu thích + playlist tự tạo (`custom_playlists`, giữ thứ tự, gộp custom trước folder) |
 | `sdl_runtime.py` / `input.py` / `visuals.py` | Nạp SDL2, map phím, phổ nhạc |
 | `ssl_context.py` / `diagnostics.py` / `logger.py` / `audio_format.py` / `qrcode.py` | TLS verify, diagnose, log xoay vòng, định dạng audio, QR |
 
@@ -29,19 +29,20 @@
 trên Spruce, ưu tiên native bind trước `dll-mali`). `files/release.json`:
 repo GitHub cho tool release. `files/reporting.json`: URL relay công khai.
 
-## 2. Test — 211 test, 3 file
+## 2. Test — 242 test, 4 file
 
 | File | Phủ |
 |---|---|
 | `tests/test_core.py` | Thư viện, paths, settings, audio/EQ, lyrics, Drive list/cache/prefetch, UI logic |
 | `tests/test_drive_download.py` | Job dùng chung (không tải trùng), % kẹp 0–100, hủy, resolve không block UI, offline index + khớp tên/kích thước, toast, badge, strip/inline progress |
 | `tests/test_render_smoke.py` | **Chạy thật `_render()`** mọi màn hình + trạng thái (stub duy nhất là SDL và `measure` trả đúng tuple như TTF thật) |
+| `tests/test_features_v121.py` | Xóa slot (X + Quick Menu + reset default), tải theo album, playlist tự tạo (tạo/thêm/giữ thứ tự/xóa), tải cả thư mục (bỏ subfolder, check SD, xác nhận, tải nối tiếp) |
 
 Chạy:
 
 ```powershell
 py -3 -m compileall -q files tools tests
-py -3 -m unittest tests.test_core tests.test_drive_download tests.test_render_smoke
+py -3 -m unittest tests.test_core tests.test_drive_download tests.test_render_smoke tests.test_features_v121
 ```
 
 Bài học xương máu (v1.19.0): crash `int + tuple` ở badge lọt qua vì không

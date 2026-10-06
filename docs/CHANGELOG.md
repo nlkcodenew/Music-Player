@@ -1,6 +1,26 @@
 # LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.20.4**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.0**.
+
+## v1.21.0 — Xóa Drive hỏng + tải theo album + playlist + tải cả thư mục
+
+- **Xóa link Drive hỏng**: X trên dòng slot Drive 1–N hoặc Quick Menu →
+  Remove This Drive (có hộp xác nhận A/B). `drive.remove_slot()` + xóa cache
+  listing, giữ nhạc đã tải. Xóa slot cuối reset về Drive mặc định.
+- **Tải về local theo album**: mọi bản lưu nằm ở
+  `Music/Drive/<Slot>/<Folder>/` (mỗi album 1 thư mục con, không đổ chung
+  vào `Music/`); status `Saved to Drive/...` ghi rõ đích
+  (`offline_display_dir()`).
+- **Playlist tốt**: playlist tự tạo trong `collections.json`
+  (`Playlist 1...`, giữ thứ tự thêm, từ chối `drive://`). PLAYLISTS gộp
+  custom trước + folder sau; Quick Menu Add to Playlist / New Playlist /
+  Remove / Delete; 24 test mới `test_features_v121.py`.
+- **Tải cả thư mục Drive**: X trên thư mục (hoặc Download This Folder) chỉ
+  lấy file trực tiếp, bỏ thư mục con (`folder_direct_audio()`); đo tổng
+  dung lượng + dung lượng trống SD (`disk_free_bytes`), cảnh báo lớn và hỏi
+  xác nhận; tải nối tiếp từng bài, bỏ qua ON DEVICE, rescan 1 lần cuối.
+- Footer DRIVE: `A OPEN  X SAVE/DEL  Y MUSIC`; slot list: `X DELETE`.
+  Tổng test: 242 passed.
 
 ## v1.20.4 — Stock OS FLAC decoder hotfix
 

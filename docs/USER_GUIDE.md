@@ -1,4 +1,4 @@
-# HƯỚNG DẪN SỬ DỤNG — Music Player v1.20.4
+# HƯỚNG DẪN SỬ DỤNG — Music Player v1.21.0
 
 > Dành cho người dùng cuối trên TrimUI Brick Pro (Stock OS) và Smart Pro S
 > (Spruce OS). Tài liệu kỹ thuật cho dev nằm ở `DRIVE_OFFLINE.md`,
@@ -24,7 +24,7 @@ Mở app từ menu máy. Lần đầu sẽ hiện logo **NLK** ~2 giây (bấm p
 |---|---|---|
 | ALL SONGS | Mặc định khi mở | Toàn bộ nhạc trên thẻ |
 | FAVORITE SONGS | Y trong Library | Bài đã bấm X đánh dấu |
-| PLAYLISTS | Y trong Library | Mỗi thư mục con của `Music` là 1 playlist |
+| PLAYLISTS | Y trong Library | Playlist tự tạo (lên trước) + mỗi thư mục con của `Music` là 1 playlist |
 | MUSIC (nguồn phát) | Y trong Library | Chọn LOCAL / DRIVE / + Add Drive |
 | DRIVE | MUSIC → DRIVE | Duyệt thư mục Google Drive |
 | NOW PLAYING | Start / A vào bài | Thanh phát, phổ nhạc, lời |
@@ -34,11 +34,15 @@ Mở app từ menu máy. Lần đầu sẽ hiện logo **NLK** ~2 giây (bấm p
 ## 3. Phím bấm
 
 - **D-pad lên/xuống**: di chuyển. **Trái/phải**: tua khi đang phát.
-- **A**: mở thư mục / phát / tạm dừng.
+- **A**: mở thư mục / phát / tạm dừng. **A** xác nhận hộp thoại.
 - **B**: quay lại. Đang tải thì **hủy tải**. Ở Library thì mở xác nhận thoát.
+  **B** hủy hộp thoại xác nhận.
 - **L1/R1**: bài trước / bài kế.
 - **L2/R2**: bật-tắt shuffle / đổi repeat (off → all → one), dùng ở mọi màn hình.
-- **X trong danh sách Drive**: tải bài về máy (chạy nền, % hiện ngay trong dòng).
+- **X trên bài Drive**: tải bài về máy (chạy nền, % hiện ngay trong dòng).
+- **X trên thư mục Drive**: tải cả thư mục (chỉ file nằm trực tiếp, bỏ thư
+  mục con; hiện dung lượng + dung lượng trống SD, A tải / B hủy).
+- **X trên danh sách slot Drive 1–N**: xóa link Drive đó (hỏi xác nhận).
 - **X ở chỗ khác**: thêm/bỏ yêu thích.
 - **Y trong Library**: đổi chế độ xem. **Y khi đang phát**: lưu bài Drive đang
   phát về máy.
@@ -62,8 +66,42 @@ Không cần API key với thư mục chia sẻ công khai ("Anyone with the lin
 5. Bài nào đã có trên máy (kể cả nằm ở thư mục khác) sẽ có nhãn
    **ON DEVICE** — bấm X vào đó chỉ báo `Already saved: ...`, không tải lại.
 
-Bài đã lưu nằm ở `Music/Drive/<Tên thư mục>/` và tự xuất hiện trong LOCAL
-sau khi app quét lại thư viện.
+Bài đã lưu nằm ở `Music/Drive/<Tên slot>/<Tên thư mục>/` (mỗi album 1 thư
+mục con riêng, không đổ chung vào `Music/`) và tự xuất hiện trong LOCAL
+sau khi app quét lại thư viện. Thông báo `Saved to Drive/...` ghi rõ thư
+mục đích.
+
+### Xóa link Drive hỏng
+
+- Cách 1: ở màn hình DRIVE khi hiện danh sách slot Drive 1–N, chọn slot hỏng
+  rồi bấm **X** → hộp xác nhận `Remove ...?` (A xóa, B giữ).
+- Cách 2: đang mở DRIVE (kể cả khi list lỗi do link hỏng) → Quick Menu →
+  **Remove This Drive** → xác nhận.
+- Chỉ xóa slot + cache listing; nhạc đã tải trong `Music/Drive/` được giữ.
+  Xóa slot cuối sẽ reset về Drive mặc định.
+
+### Tải cả thư mục Drive
+
+- Chọn thư mục trong DRIVE rồi bấm **X** (hoặc Quick Menu → Download This
+  Folder khi đang mở thư mục đó).
+- App chỉ lấy file nhạc nằm **trực tiếp** trong thư mục, **bỏ qua thư mục
+  con**, rồi hiện: số bài, tổng dung lượng (~MB/GB hoặc `size unknown` khi
+  Drive public không cho kích thước), dung lượng trống SD, thư mục đích
+  `Music/Drive/<Slot>/<Folder>/`.
+- Bấm **A** để tải nối tiếp từng bài (bài đã có ON DEVICE thì bỏ qua),
+  **B** để hủy. Hết dung lượng SD thì báo `Not enough space` và không tải.
+  Xong thì báo `Folder '...': N/N saved to ...` và quét lại thư viện một lần.
+
+### Playlist tự tạo
+
+- Tay cầm khó gõ tên nên playlist mới tự đặt `Playlist 1`, `Playlist 2`...
+- Quick Menu → **Add to Playlist...** (khi đang phát hoặc đang chọn 1 bài
+  local) → chọn playlist hoặc **New Playlist...**.
+- Quick Menu → **New Playlist** tạo list rỗng.
+- Màn hình PLAYLISTS hiện playlist tự tạo trước, playlist thư mục sau. A mở,
+  X đánh dấu yêu thích như cũ.
+- Trong playlist tự tạo: Quick Menu → **Remove This Song from Playlist** để
+  bỏ bài, **Delete Playlist** để xóa list (file nhạc giữ nguyên).
 
 ### Thêm Drive của chính mình
 

@@ -1,4 +1,4 @@
-# KIẾN TRÚC DRIVE & OFFLINE — Music Player v1.19–v1.20
+# KIẾN TRÚC DRIVE & OFFLINE — Music Player v1.19–v1.21
 
 > Tài liệu kỹ thuật cho dev. Hướng dẫn người dùng ở `USER_GUIDE.md`.
 > Code: `files/musicplayer/drive.py` (mạng + job + index),
@@ -104,3 +104,20 @@ trống. Ô toast `SAVED` tự tắt sau 8 s; breadcrumb Drive tự thu ngắn c
 - Slot Drive 1–N (`drive_slots`, `drive_slot` trong settings): nhiều thư mục
   gốc, đổi slot trong DRIVE view. Link Drive riêng chỉ lưu local
   (`settings.json`), bị redact khỏi mọi báo lỗi.
+- Xóa slot (`remove_slot()` + `_do_delete_drive_slot()`): X trên dòng
+  `slot:N` hoặc Quick Menu Remove This Drive, hộp xác nhận chung
+  (`pending_confirm`, A OK / B Cancel). `forget_folder()` xóa cache listing,
+  nhạc trong `Music/Drive/` giữ nguyên. Hết slot thì reset về
+  `DEFAULT_FOLDER_ID`.
+- Tải về theo album: `offline_path(music, album, file)` với
+  `album = Slot/Sub/...` (`_drive_album_label()` + `_drive_album_for_folder()`)
+  nên mỗi album 1 thư mục con `Music/Drive/<Slot>/<Folder>/`, không đổ chung
+  vào `Music/`. `_finish_offline_save()` báo `Saved to Drive/...` qua
+  `offline_display_dir()`.
+- Tải cả thư mục: `list_folder_contents()` (1 tầng, API key theo pageToken tới
+  500 item, public dùng embed), `folder_direct_audio()` bỏ thư mục con,
+  `estimate_download()` + `disk_free_bytes()` để cảnh báo lớn + thiếu chỗ.
+  `_request_download_folder()` / `_request_download_current_folder()` hỏi xác
+  nhận, `_start_folder_download()` + `_pump_folder_job()` tải nối tiếp, bỏ qua
+  ON DEVICE, `_poll_offline_job()` rẽ nhánh folder (không rescan từng bài),
+  `_finish_folder_job()` rescan 1 lần + báo `N/N saved to ...`.

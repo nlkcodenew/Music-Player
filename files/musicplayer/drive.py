@@ -407,6 +407,100 @@ def find_slot(slots, folder_id):
     return -1
 
 
+def remove_slot(slots, target):
+    """Xoa mot Drive slot, tra ve (danh sach moi, slot da xoa hoac None).
+
+    ``target`` co the la index (int) hoac folder_id (str). Khong sua list
+    goc. Dung cho option "xoa link drive hong": chi xoa slot + cache
+    listing, khong xoa file nhac da tai ve trong ``Music/Drive/``.
+    """
+    cleaned = [dict(slot) for slot in (slots or []) if isinstance(slot, dict)]
+    index = -1
+    if isinstance(target, int) and not isinstance(target, bool):
+        if 0 <= target < len(cleaned):
+            index = target
+    else:
+        wanted = extract_folder_id(target) if target else ""
+        if wanted:
+            for position, slot in enumerate(cleaned):
+                if slot.get("folder") == wanted:
+                    index = position
+                    break
+    if index < 0:
+        return cleaned, None
+    removed = cleaned.pop(index)
+    return cleaned, removed
+
+
+def list_folder_contents(app_dir, folder_id, api_key="", timeout=8, page_size=100):
+    """Liet ke file nhac nam TRUC TIEP trong mot Drive folder.
+
+    Dung cho "tai ca thu muc": chi lay 1 tang (khong de quy vao thu
+    muc con). Voi API key thi theo het pageToken (toi da 500 item);
+    khong key thi dung embed view (1 trang). Tra ve (entries, truncated).
+    """
+    if not folder_id:
+        raise DriveError("Drive folder is not configured")
+    if api_key:
+        merged = []
+        token = ""
+        while True:
+            entries, token = list_folder(
+                app_dir, folder_id, api_key, token,
+                max(1, min(int(page_size or PAGE_SIZE), 100)), timeout,
+            )
+            merged.extend(entries)
+            if not token or len(merged) >= MAX_PUBLIC_ENTRIES:
+                break
+        return merged[:MAX_PUBLIC_ENTRIES], bool(token)
+    entries, _token = list_folder_public(app_dir, folder_id, timeout)
+    return entries, False
+
+
+def folder_direct_audio(entries):
+    """Loc file nhac nam truc tiep trong folder, bo qua thu muc con."""
+    return [item for item in (entries or []) if not getattr(item, "is_folder", False)]
+
+
+def estimate_download(entries):
+    """Tra ve (count, total_bytes, unknown) cho list file can tai."""
+    items = list(entries or [])
+    total = 0
+    unknown = False
+    for item in items:
+        try:
+            size = int(getattr(item, "size", 0) or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if size <= 0:
+            unknown = True
+        else:
+            total += size
+    return len(items), total, unknown
+
+
+def disk_free_bytes(path):
+    """Dung luong trong con lai cua the SD tai ``path`` (bytes)."""
+    try:
+        probe = os.path.abspath(path or ".")
+        while probe and not os.path.exists(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
+        return int(shutil.disk_usage(probe or ".").free)
+    except (OSError, ValueError):
+        return 0
+
+
+def offline_display_dir(album):
+    """Duong dan hien thi cho nguoi dung: ``Drive/<Album>`` (khong full path)."""
+    cleaned = str(album or "").strip().strip("/")
+    if not cleaned:
+        return OFFLINE_SUBDIR
+    return "%s/%s" % (OFFLINE_SUBDIR, cleaned)
+
+
 def forget_folder(data_dir, folder_id):
     """Drop cached listing pages for one folder (keeps stream files)."""
     if not folder_id:

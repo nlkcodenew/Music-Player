@@ -17,13 +17,19 @@ from .drive import (
     StreamJob,
     clear_cache as drive_clear_cache,
     clear_finished_jobs as drive_clear_finished_jobs,
+    disk_free_bytes as drive_disk_free,
+    estimate_download as drive_estimate,
     extract_folder_id as drive_extract_folder_id,
     find_offline_copy as drive_find_offline_copy,
+    folder_direct_audio as drive_folder_audio,
     format_bytes as drive_format_bytes,
     get_cached_folder as drive_get_cached,
     list_folder as drive_list_folder,
+    list_folder_contents as drive_list_contents,
     list_folder_public as drive_list_public,
+    offline_display_dir as drive_display_dir,
     put_cached_folder as drive_put_cache,
+    remove_slot as drive_remove_slot,
     start_offline_job as drive_start_offline_job,
     start_stream_job as drive_start_stream_job,
     stream_cache_size as drive_cache_size,
@@ -138,6 +144,13 @@ class MusicPlayerApp:
         self.download_job = None
         self._saved_toast = ("", 0.0)
         self._jobs_pruned_at = time.monotonic()
+        # Hop xac nhan chung (xoa Drive, tai ca thu muc, xoa playlist):
+        # {"title":..., "lines":[...], "on_confirm":callable}.
+        self.pending_confirm = None
+        # Tai ca thu muc Drive (khong gom thu muc con): {"album":...,
+        # "entries":[...], "index":..., "done":..., "skipped":...,
+        # "failed":..., "folder_name":...} hoac None.
+        self.folder_job = None
 
     def initialize(self):
         self.display.restore()
@@ -464,6 +477,31 @@ class MusicPlayerApp:
         get_logger().info("input action=%s screen=%s", action, self.screen)
         if self.update_busy:
             return
+        if getattr(self, "pending_confirm", None):
+            if action == "a":
+                pending = self.pending_confirm
+                self.pending_confirm = None
+                try:
+                    callback = pending.get("on_confirm")
+                    if callable(callback):
+                        callback()
+                except Exception as error:
+                    get_logger().warning("confirm action failed: %s", error)
+                    self.status = "Action failed: %s" % error
+                    self.status_error = True
+            elif action in ("b", "select"):
+                pending = self.pending_confirm
+                self.pending_confirm = None
+                try:
+                    cancel = pending.get("on_cancel")
+                    if callable(cancel):
+                        cancel()
+                    else:
+                        self.status = "Cancelled"
+                        self.status_error = False
+                except Exception:
+                    pass
+            return
         if self.screen == "library" and action == "prev":
             action = "up"
         elif self.screen == "library" and action == "next":
@@ -542,7 +580,7 @@ class MusicPlayerApp:
                 rows = self._drive_rows()
                 if rows:
                     self.selection = min(self.selection, len(rows) - 1)
-                    self._drive_download_row(rows[self.selection])
+                    self._drive_x_row(rows[self.selection])
             elif self.screen in ("library", "playing"):
                 self._toggle_favorite()
             return
@@ -655,6 +693,20 @@ class MusicPlayerApp:
                 ("eq_treble", "Treble: %+d dB" % treble),
                 ("eq_back", "Back"),
             ]
+        if getattr(self, "quick_menu_page", "main") == "playlist_pick":
+            try:
+                names = self.collections.custom_names()
+            except AttributeError:
+                names = []
+            items = [("pl_pick_new", "New Playlist...")]
+            for name in names:
+                try:
+                    count = len(self.collections.custom_playlists.get(name, []))
+                except AttributeError:
+                    count = 0
+                items.append(("pl_pick:%s" % name, "%s (%d)" % (name, count)))
+            items.append(("pl_pick_back", "Back"))
+            return items
         entries = [
             ("lyrics", "Lyrics"),
             ("equalizer", "Equalizer: %s" % self.player.equalizer.preset),
@@ -665,6 +717,8 @@ class MusicPlayerApp:
             ("led_mode", "LED Mode: %s" % str(self.settings.get("led_mode")).title()),
             ("spectrum", "Spectrum: %s" % ("On" if self.settings.get("spectrum") else "Off")),
             ("intro", "Intro: %s" % ("On" if self.settings.get("intro") else "Off")),
+            ("playlist_add", "Add to Playlist..."),
+            ("playlist_new", "New Playlist"),
             ("drive_refresh", "Drive Refresh"),
             ("drive_download", "Drive Download (offline)"),
             ("drive_clear", "Drive Cache: %s - Clear" % self._drive_cache_label()),
@@ -681,6 +735,45 @@ class MusicPlayerApp:
                 ),
             ),
         ]
+        # Cac muc theo ngu canh (chi hien khi dang o dung man hinh).
+        contextual = []
+        try:
+            in_drive = getattr(self, "library_mode", "") == "drive"
+            has_folder_job = bool(getattr(self, "folder_job", None))
+            in_custom_tracks = (
+                getattr(self, "library_mode", "") == "playlist_tracks"
+                and self.collections.is_custom_playlist(getattr(self, "active_playlist", ""))
+            )
+        except Exception:
+            in_drive, has_folder_job, in_custom_tracks = False, False, False
+        if in_custom_tracks:
+            contextual.append(("playlist_remove", "Remove This Song from Playlist"))
+            contextual.append(("playlist_delete", "Delete Playlist: %s" % getattr(self, "active_playlist", "")))
+        elif getattr(self, "library_mode", "") in ("playlists", "favorite_playlists"):
+            try:
+                rows = self._library_entries()
+                picked = rows[self.selection] if rows and 0 <= self.selection < len(rows) else ""
+                if picked and self.collections.is_custom_playlist(picked):
+                    contextual.append(("playlist_delete", "Delete Playlist: %s" % picked))
+            except Exception:
+                pass
+        if in_drive:
+            try:
+                slot_name = self._drive_slot_name()
+            except Exception:
+                slot_name = "Drive"
+            contextual.append(("drive_folder_here", "Download This Folder"))
+            contextual.append(("drive_remove", "Remove This Drive: %s" % slot_name))
+        if has_folder_job:
+            try:
+                fname = self.folder_job.get("folder_name", "Folder")
+            except Exception:
+                fname = "Folder"
+            contextual.append(("folder_cancel", "Cancel Folder Download: %s" % fname))
+        if contextual:
+            # Chen sau muc playlist de de thay, truoc drive_refresh.
+            anchor = next((i for i, (key, _l) in enumerate(entries) if key == "drive_refresh"), len(entries))
+            entries[anchor:anchor] = contextual
         if self.update_manifest:
             entries.append(("update", "Install Update v%s" % self.update_manifest["version"]))
         entries.extend((("diagnostic", "Send Diagnostic"), ("close", "Close Menu")))
@@ -692,13 +785,21 @@ class MusicPlayerApp:
         elif action in ("stick_down", "next"):
             action = "down"
         entries = self._quick_menu_entries()
+        if not entries:
+            self.quick_menu = False
+            return
+        self.quick_menu_selection = max(0, min(self.quick_menu_selection, len(entries) - 1))
         if action == "select":
             self.quick_menu = False
             return
         if action == "b":
-            if getattr(self, "quick_menu_page", "main") == "equalizer":
+            page = getattr(self, "quick_menu_page", "main")
+            if page == "equalizer":
                 self.quick_menu_page = "main"
                 self.quick_menu_selection = 1
+            elif page == "playlist_pick":
+                self.quick_menu_page = "main"
+                self.quick_menu_selection = 0
             else:
                 self.quick_menu = False
             return
@@ -711,6 +812,9 @@ class MusicPlayerApp:
             self._quick_menu_clamp_scroll()
             return
         selected = entries[self.quick_menu_selection][0]
+        if getattr(self, "quick_menu_page", "main") == "playlist_pick":
+            self._handle_playlist_pick(selected, action)
+            return
         if getattr(self, "quick_menu_page", "main") == "equalizer":
             self._handle_equalizer_menu(selected, action)
             return
@@ -759,9 +863,60 @@ class MusicPlayerApp:
                 rows = self._drive_rows()
                 if rows:
                     self.selection = min(self.selection, len(rows) - 1)
-                    self._drive_download_row(rows[self.selection])
+                    self._drive_x_row(rows[self.selection])
             else:
                 self.status = "Open DRIVE view (Y) first, then download"
+                self.status_error = True
+        elif selected == "drive_folder_here":
+            self.quick_menu = False
+            self._request_download_current_folder()
+        elif selected == "drive_remove":
+            # Giu menu dong roi hoi xoa de tranh nham phim.
+            self._request_remove_current_drive()
+        elif selected == "folder_cancel":
+            self.quick_menu = False
+            job_state = getattr(self, "folder_job", None)
+            active = getattr(self, "download_job", None)
+            if active is not None and getattr(active, "running", False):
+                try:
+                    active.cancel()
+                except Exception:
+                    pass
+            self.folder_job = None
+            self.status = "Folder download cancelled"
+            self.status_error = False
+            get_logger().info("folder download cancelled by user")
+        elif selected == "playlist_add":
+            if self._playlist_target_track() is None:
+                self.quick_menu = False
+                self.status = "Play or select a local song first"
+                self.status_error = True
+            else:
+                self.quick_menu_page = "playlist_pick"
+                self.quick_menu_selection = 0
+                self.quick_menu_scroll = 0
+        elif selected == "playlist_new":
+            self.quick_menu = False
+            self._create_playlist_for_target()
+        elif selected == "playlist_remove":
+            self.quick_menu = False
+            self._remove_selected_from_playlist()
+        elif selected == "playlist_delete":
+            # Ten playlist nam trong label "Delete Playlist: <ten>".
+            label = ""
+            try:
+                rows = self._library_entries()
+                if getattr(self, "library_mode", "") == "playlist_tracks":
+                    label = getattr(self, "active_playlist", "")
+                elif rows and 0 <= self.selection < len(rows):
+                    label = rows[self.selection]
+            except Exception:
+                label = ""
+            self.quick_menu = False
+            if label:
+                self._request_delete_playlist(label)
+            else:
+                self.status = "Select a custom playlist first"
                 self.status_error = True
         elif selected == "drive_clear":
             try:
@@ -850,6 +1005,27 @@ class MusicPlayerApp:
             self.status = "Equalizer unavailable on this firmware runtime"
             self.status_error = True
         get_logger().info("equalizer preset=%s gains=%s", equalizer.preset, equalizer.gains)
+
+    def _handle_playlist_pick(self, selected, action):
+        """Chon playlist trong submenu 'Add to Playlist...': A them, B ve."""
+        if action != "a":
+            return
+        if selected == "pl_pick_back":
+            self.quick_menu_page = "main"
+            self.quick_menu_selection = 0
+            self.quick_menu_scroll = 0
+            return
+        if selected == "pl_pick_new":
+            self.quick_menu = False
+            self.quick_menu_page = "main"
+            self._create_playlist_for_target()
+            return
+        if selected.startswith("pl_pick:"):
+            name = selected[len("pl_pick:"):]
+            self.quick_menu = False
+            self.quick_menu_page = "main"
+            self._add_target_to_playlist(name)
+            return
 
     def _cycle_audio_output(self, step):
         current = self.settings.get("audio_output")
@@ -1059,12 +1235,120 @@ class MusicPlayerApp:
         if self.library_mode == "favorites":
             return [track for track in self.tracks if self.collections.is_track_favorite(track.path)]
         if self.library_mode == "playlists":
-            return self.collections.playlists(self.tracks)
+            try:
+                return self.collections.combined_playlists(self.tracks)
+            except AttributeError:
+                return self.collections.playlists(self.tracks)
         if self.library_mode == "favorite_playlists":
-            return self.collections.playlists(self.tracks, favorites_only=True)
+            try:
+                return self.collections.combined_playlists(self.tracks, favorites_only=True)
+            except AttributeError:
+                return self.collections.playlists(self.tracks, favorites_only=True)
         if self.library_mode == "playlist_tracks":
+            try:
+                if self.collections.is_custom_playlist(self.active_playlist):
+                    return self.collections.custom_tracks(self.active_playlist, self.tracks)
+            except AttributeError:
+                pass
             return [track for track in self.tracks if track.folder == self.active_playlist]
         return self.tracks
+
+    def _playlist_target_track(self):
+        """Bai can them vao playlist (playing hoac dong library dang chon)."""
+        if getattr(self, "screen", "") in ("playing", "lyrics"):
+            track = getattr(getattr(self, "player", None), "current", None)
+            if track is not None and not str(getattr(track, "path", "")).startswith("drive://"):
+                return track
+            return None
+        if getattr(self, "screen", "") == "library":
+            mode = getattr(self, "library_mode", "")
+            if mode in ("all", "favorites", "playlist_tracks"):
+                entries = self._library_entries()
+                if entries and 0 <= self.selection < len(entries):
+                    candidate = entries[self.selection]
+                    if hasattr(candidate, "path") and not str(candidate.path).startswith("drive://"):
+                        return candidate
+        return None
+
+    def _create_playlist_for_target(self, track=None):
+        target = track if track is not None else self._playlist_target_track()
+        name = self.collections.create_playlist("")
+        if target is not None:
+            self.collections.add_to_playlist(name, target.path)
+        self.collections.save()
+        self.status = "Playlist created: %s" % name
+        self.status_error = False
+        get_logger().info("playlist created name=%s", name)
+        return name
+
+    def _add_target_to_playlist(self, playlist_name, track=None):
+        target = track if track is not None else self._playlist_target_track()
+        if target is None:
+            self.status = "Play a local song first, then add to playlist"
+            self.status_error = True
+            return False
+        label, added = self.collections.add_to_playlist(playlist_name, target.path)
+        self.collections.save()
+        if added:
+            self.status = "Added to %s: %s" % (label, target.title)
+            self.status_error = False
+        else:
+            self.status = "Already in %s" % label
+            self.status_error = False
+        get_logger().info("playlist add name=%s track=%r added=%s", label, target.title, added)
+        return added
+
+    def _request_delete_playlist(self, playlist_name):
+        label = str(playlist_name or "")
+        if not self.collections.is_custom_playlist(label):
+            self.status = "Only custom playlists can be deleted"
+            self.status_error = True
+            return False
+        count = len(self.collections.custom_playlists.get(label, []))
+        self._ask_confirm(
+            "Delete %s?" % label,
+            ["Playlist: %s" % label, "%d tracks will be removed (files stay)." % count],
+            on_confirm=lambda: self._do_delete_playlist(label),
+        )
+        return True
+
+    def _do_delete_playlist(self, playlist_name):
+        if not self.collections.delete_playlist(playlist_name):
+            self.status = "Playlist not found"
+            self.status_error = True
+            return False
+        self.collections.save()
+        if getattr(self, "active_playlist", "") == playlist_name:
+            self.library_mode = self.playlist_parent_mode
+            self.active_playlist = ""
+            self.selection = 0
+            self.scroll = 0
+        self.status = "Deleted playlist: %s" % playlist_name
+        self.status_error = False
+        get_logger().info("playlist deleted name=%s", playlist_name)
+        return True
+
+    def _remove_selected_from_playlist(self):
+        if getattr(self, "library_mode", "") != "playlist_tracks":
+            return False
+        if not self.collections.is_custom_playlist(getattr(self, "active_playlist", "")):
+            self.status = "Only custom playlists support removal (X still favorites)"
+            self.status_error = True
+            return False
+        entries = self._library_entries()
+        if not entries or not (0 <= self.selection < len(entries)):
+            return False
+        track = entries[self.selection]
+        if self.collections.remove_from_playlist(self.active_playlist, track.path):
+            self.collections.save()
+            self.status = "Removed from %s: %s" % (self.active_playlist, track.title)
+            self.status_error = False
+            entries = self._library_entries()
+            self.selection = min(self.selection, max(0, len(entries) - 1))
+            return True
+        self.status = "Track not in playlist"
+        self.status_error = True
+        return False
 
     def _open_source(self):
         self.library_mode = "source"
@@ -1642,6 +1926,397 @@ class MusicPlayerApp:
             return False
         return self._save_entry_offline(row, self._drive_album_label())
 
+    def _drive_x_row(self, row):
+        """Phim X trong DRIVE: tuy dong ma lam viec khac nhau.
+
+        - Dong slot (Drive 1-N, file_id="slot:N"): hoi xoa link Drive.
+        - Dong thu muc: hoi tai ca thu muc (khong gom thu muc con).
+        - Dong bai nhac: luu bai do ve may (nhu cu).
+        Tach rieng de khong nham "xoa" voi "tai" nhu ban cu thieu option xoa.
+        """
+        from .drive import DriveEntry as _DriveEntry
+        if row == "__more__":
+            return self._drive_download_row(row)
+        if not isinstance(row, _DriveEntry):
+            return False
+        if row.file_id.startswith("slot:"):
+            try:
+                slot_index = int(row.file_id.split(":", 1)[1])
+            except (TypeError, ValueError):
+                return False
+            self._request_delete_drive_slot(slot_index)
+            return True
+        if row.is_folder:
+            self._request_download_folder(row)
+            return True
+        return bool(self._drive_download_row(row))
+
+    def _ask_confirm(self, title, lines, on_confirm, on_cancel=None):
+        """Hien hop xac nhan chung: A dong y, B huy."""
+        self.quick_menu = False
+        self.pending_confirm = {
+            "title": str(title or "Confirm"),
+            "lines": [str(line) for line in (lines or [])][:6],
+            "on_confirm": on_confirm,
+            "on_cancel": on_cancel,
+        }
+        get_logger().info("confirm requested: %s", title)
+
+    def _is_showing_slot_list(self):
+        try:
+            if getattr(self, "drive_stack", None):
+                return False
+            return len(self._drive_slots()) > 1
+        except Exception:
+            return False
+
+    def _request_delete_drive_slot(self, slot_index):
+        try:
+            slots = self._drive_slots()
+            slot = slots[slot_index]
+        except (TypeError, ValueError, IndexError, KeyError):
+            self.status = "Drive slot not found"
+            self.status_error = True
+            return False
+        name = str(slot.get("name", "Drive"))
+        folder = str(slot.get("folder", ""))
+        short = folder[:18] + "..." if len(folder) > 21 else folder
+        lines = [
+            "Slot: %s" % name,
+            "Folder: %s" % (short or "(unknown)"),
+            "Cached listing will be cleared.",
+            "Music already saved stays on SD.",
+        ]
+        if len(slots) <= 1:
+            lines.append("Last slot: will reset to default.")
+        self._ask_confirm(
+            "Remove %s?" % name, lines,
+            on_confirm=lambda: self._do_delete_drive_slot(slot_index),
+        )
+        return True
+
+    def _request_remove_current_drive(self):
+        """Xoa slot Drive dang mo (dung khi link hong khong vao duoc)."""
+        try:
+            index = self._drive_slot_index()
+            slots = self._drive_slots()
+            if not slots:
+                raise IndexError("no slots")
+        except Exception:
+            self.status = "No Drive slot to remove"
+            self.status_error = True
+            return False
+        return self._request_delete_drive_slot(index)
+
+    def _do_delete_drive_slot(self, slot_index):
+        from .drive import forget_folder as _forget
+        try:
+            slots = self._drive_slots()
+            new_slots, removed = drive_remove_slot(slots, slot_index)
+        except Exception as error:
+            self.status = "Remove Drive: %s" % error
+            self.status_error = True
+            return False
+        if removed is None:
+            self.status = "Drive slot not found"
+            self.status_error = True
+            return False
+        name = str(removed.get("name", "Drive"))
+        folder = str(removed.get("folder", ""))
+        try:
+            _forget(self.paths.data_dir, folder)
+        except Exception as error:
+            get_logger().warning("forget drive cache failed: %s", error)
+        try:
+            if not new_slots:
+                new_slots = [{"name": "Drive 1", "folder": DEFAULT_FOLDER_ID}]
+                new_index = 0
+                new_folder = DEFAULT_FOLDER_ID
+                note = "Removed %s - reset to default" % name
+            else:
+                current = self._drive_slot_index()
+                if slot_index < current:
+                    new_index = max(0, current - 1)
+                elif slot_index == current:
+                    new_index = min(current, len(new_slots) - 1)
+                else:
+                    new_index = min(current, len(new_slots) - 1)
+                new_folder = new_slots[new_index]["folder"]
+                note = "Removed %s" % name
+            self.settings.set("drive_slots", new_slots)
+            self.settings.set("drive_slot", new_index)
+            self.settings.set("drive_folder_id", new_folder)
+            self.settings.save()
+        except Exception as error:
+            self.status = "Cannot save settings: %s" % error
+            self.status_error = True
+            return False
+        self.drive_stack = []
+        self.drive_entries = []
+        self.drive_page_token = ""
+        self.drive_loaded = False
+        self.selection = 0
+        self.scroll = 0
+        self._invalidate_saved_rows()
+        self.status = note
+        self.status_error = False
+        get_logger().info("drive slot removed name=%s folder=%s", name, folder)
+        self._drive_refresh()
+        return True
+
+    def _drive_album_for_folder(self, folder_name):
+        """Album dich cho thu muc con: <Album hien tai>/<Ten thu muc>."""
+        base = self._drive_album_label()
+        extra = str(folder_name or "").strip()
+        if extra and base:
+            return "%s/%s" % (base, extra)
+        return extra or base or "Drive"
+
+    def _fetch_folder_children(self, folder_id):
+        """Lay list file trong thu muc con (1 tang, de tai ca thu muc)."""
+        try:
+            app_dir = self.paths.app_dir
+        except Exception:
+            app_dir = ""
+        api_key = self._drive_api_key()
+        entries, _truncated = drive_list_contents(app_dir, folder_id, api_key)
+        return entries
+
+    def _request_download_folder(self, folder_row):
+        """Hoi tai ca thu muc Drive (chi file truc tiep, bo thu muc con).
+
+        Do dung luong SD + canh bao "se rat lon, can xac nhan" theo yeu cau:
+        hien tong dung luong + dung luong trong, A tai / B huy.
+        """
+        if getattr(self, "download_job", None) is not None and \
+                getattr(self.download_job, "running", False):
+            self.status = "Finish current download first (B to cancel it)"
+            self.status_error = True
+            return False
+        if getattr(self, "folder_job", None):
+            self.status = "Folder download already running"
+            self.status_error = True
+            return False
+        folder_id = getattr(folder_row, "file_id", "")
+        folder_name = getattr(folder_row, "name", "Folder")
+        if not folder_id or folder_id.startswith("slot:"):
+            self.status = "Select a Drive folder first"
+            self.status_error = True
+            return False
+        self.status = "Checking folder..."
+        self.status_error = False
+        try:
+            children = self._fetch_folder_children(folder_id)
+        except DriveError as error:
+            self.status = self._drive_friendly_error("Folder: %s" % error)
+            self.status_error = True
+            return False
+        except Exception as error:
+            self.status = "Folder: %s" % error
+            self.status_error = True
+            return False
+        audio = drive_folder_audio(children)
+        if not audio:
+            self.status = "Folder '%s' has no audio files (subfolders skipped)" % folder_name
+            self.status_error = True
+            return False
+        count, total, unknown = drive_estimate(audio)
+        try:
+            free = drive_disk_free(self.paths.music_dir)
+        except Exception:
+            free = 0
+        if total > 0 and free > 0 and total > free:
+            self.status = "Not enough space: need %s, free %s" % (
+                drive_format_bytes(total), drive_format_bytes(free))
+            self.status_error = True
+            return False
+        target_album = self._drive_album_for_folder(folder_name)
+        dest = drive_display_dir(target_album)
+        if unknown or total <= 0:
+            size_line = "%d tracks (size unknown - may be large)" % count
+        else:
+            size_line = "%d tracks, total ~%s" % (count, drive_format_bytes(total))
+        lines = [
+            "Folder: %s" % folder_name,
+            size_line + " (subfolders skipped)",
+            "Free: %s" % (drive_format_bytes(free) if free else "unknown"),
+            "Save to Music/%s/" % dest,
+        ]
+        if unknown:
+            lines.append("Check Wi-Fi: size unknown, may be large.")
+        snapshot = list(audio)
+        self._ask_confirm(
+            "Download folder?",
+            lines,
+            on_confirm=lambda: self._start_folder_download(
+                folder_name, snapshot, target_album),
+        )
+        return True
+
+    def _request_download_current_folder(self):
+        """Tai toan bo file nhac trong thu muc Drive dang mo (bo thu muc con)."""
+        if not getattr(self, "drive_stack", None):
+            self.status = "Open a Drive folder first"
+            self.status_error = True
+            return False
+        if getattr(self, "folder_job", None):
+            self.status = "Folder download already running"
+            self.status_error = True
+            return False
+        audio = drive_folder_audio(getattr(self, "drive_entries", []) or [])
+        if not audio:
+            self.status = "Current folder has no audio files (subfolders skipped)"
+            self.status_error = True
+            return False
+        count, total, unknown = drive_estimate(audio)
+        try:
+            free = drive_disk_free(self.paths.music_dir)
+        except Exception:
+            free = 0
+        if total > 0 and free > 0 and total > free:
+            self.status = "Not enough space: need %s, free %s" % (
+                drive_format_bytes(total), drive_format_bytes(free))
+            self.status_error = True
+            return False
+        album = self._drive_album_label()
+        dest = drive_display_dir(album)
+        _fid, folder_name = self._drive_current()
+        if unknown or total <= 0:
+            size_line = "%d tracks (size unknown - may be large)" % count
+        else:
+            size_line = "%d tracks, total ~%s" % (count, drive_format_bytes(total))
+        lines = [
+            "Folder: %s" % folder_name,
+            size_line + " (subfolders skipped)",
+            "Free: %s" % (drive_format_bytes(free) if free else "unknown"),
+            "Save to Music/%s/" % dest,
+        ]
+        snapshot = list(audio)
+        self._ask_confirm(
+            "Download this folder?",
+            lines,
+            on_confirm=lambda: self._start_folder_download(
+                str(folder_name), snapshot, str(album)),
+        )
+        return True
+
+    def _start_folder_download(self, folder_name, entries, album):
+        """Bat dau tai noi tiep tung bai trong thu muc (nen, co %)."""
+        if getattr(self, "download_job", None) is not None and \
+                getattr(getattr(self, "download_job", None), "running", False):
+            self.status = "Finish current download first"
+            self.status_error = True
+            return False
+        items = list(entries or [])
+        if not items:
+            self.status = "Nothing to download"
+            self.status_error = True
+            return False
+        self.folder_job = {
+            "folder_name": str(folder_name or "Folder"),
+            "album": str(album or "Drive"),
+            "entries": items,
+            "index": 0,
+            "done": 0,
+            "skipped": 0,
+            "failed": 0,
+            "errors": [],
+        }
+        self.status = "Folder '%s': starting 1/%d..." % (
+            self.folder_job["folder_name"], len(items))
+        self.status_error = False
+        get_logger().info("folder download started folder=%r items=%d album=%r",
+                           folder_name, len(items), album)
+        self._pump_folder_job()
+        return True
+
+    def _pump_folder_job(self):
+        """Khoi dong file ke tiep trong folder_job (bo qua bai da co)."""
+        job_state = getattr(self, "folder_job", None)
+        if not job_state:
+            return
+        active = getattr(self, "download_job", None)
+        if active is not None and getattr(active, "running", False):
+            return
+        # Neu job cu da xong ngay (cache) thi poll truoc khi bom tiep.
+        if active is not None and getattr(active, "done", False):
+            self.download_job = None
+            active = None
+        entries = job_state["entries"]
+        while job_state["index"] < len(entries):
+            entry = entries[job_state["index"]]
+            existing = self._existing_offline_copy(entry)
+            if existing:
+                job_state["skipped"] += 1
+                job_state["index"] += 1
+                continue
+            try:
+                job = drive_start_offline_job(
+                    self.paths.app_dir, self.paths.music_dir,
+                    job_state["album"], entry, self._drive_api_key(),
+                )
+            except DriveError as error:
+                job_state["failed"] += 1
+                job_state["errors"].append(str(error)[:80])
+                job_state["index"] += 1
+                continue
+            if getattr(job, "done", False):
+                # Xong ngay (da co san giua chung): dem roi bom tiep.
+                if getattr(job, "error", ""):
+                    job_state["failed"] += 1
+                    job_state["errors"].append(str(job.error)[:80])
+                else:
+                    job_state["done"] += 1
+                job_state["index"] += 1
+                self._invalidate_saved_rows()
+                continue
+            self.download_job = job
+            total = len(entries)
+            current = job_state["index"] + 1
+            if not job.done:
+                self.status = "Folder '%s': saving %d/%d..." % (
+                    job_state["folder_name"], current, total)
+                self.status_error = False
+            return
+        self._finish_folder_job()
+
+    def _finish_folder_job(self):
+        job_state = getattr(self, "folder_job", None)
+        self.folder_job = None
+        self.download_job = None
+        if not job_state:
+            return
+        self._invalidate_saved_rows()
+        try:
+            from .library import scan_library
+            self.tracks = scan_library(self.paths.music_dir)
+        except Exception as error:
+            get_logger().warning("library rescan failed: %s", error)
+        total = len(job_state["entries"])
+        dest = drive_display_dir(job_state["album"])
+        self._note_saved(
+            DriveEntry(file_id="", name=job_state["folder_name"], mime_type="",
+                       size=0, is_folder=True,
+                       title=job_state["folder_name"], extension=""),
+            "",
+        )
+        if job_state["failed"]:
+            self.status = "Folder '%s': %d/%d saved to %s (%d skipped, %d failed)" % (
+                job_state["folder_name"], job_state["done"], total, dest,
+                job_state["skipped"], job_state["failed"])
+            self.status_error = True
+        elif job_state["skipped"] and not job_state["done"]:
+            self.status = "Folder '%s': already on device (%d skipped)" % (
+                job_state["folder_name"], job_state["skipped"])
+            self.status_error = False
+        else:
+            self.status = "Folder '%s': %d/%d saved to %s" % (
+                job_state["folder_name"], job_state["done"], total, dest)
+            self.status_error = False
+        get_logger().info("folder download finished folder=%r done=%d skipped=%d failed=%d",
+                           job_state["folder_name"], job_state["done"],
+                           job_state["skipped"], job_state["failed"])
+
     def _existing_offline_copy(self, entry):
         """Bai da co san trong thu vien local chua (ke ca o thu muc khac)."""
         try:
@@ -1705,10 +2380,19 @@ class MusicPlayerApp:
 
     def _finish_offline_save(self, entry, destination):
         job = getattr(self, "download_job", None)
+        album = str(getattr(job, "album", "") or "")
         self.download_job = None
         self._invalidate_saved_rows()
-        self._note_saved(entry, destination, getattr(job, "album", ""))
-        self.status = "Saved: %s" % self._short_saved_name(entry, destination)
+        self._note_saved(entry, destination, album)
+        short = self._short_saved_name(entry, destination)
+        if album:
+            # Giai phap tai ve local: moi album 1 thu muc con rieng trong
+            # Music/Drive/<Album>/, khong do chung vao Music/. Hien ro dich
+            # de nguoi dung biet bai nam o thu muc con nao.
+            dest = drive_display_dir(album)
+            self.status = "Saved to %s: %s" % (dest, short)
+        else:
+            self.status = "Saved: %s" % short
         self.status_error = False
         get_logger().info("drive offline saved=%s", destination)
         try:
@@ -1767,8 +2451,27 @@ class MusicPlayerApp:
         """Theo doi job luu offline chay nen; xong thi gan ten ngan vao header."""
         job = getattr(self, "download_job", None)
         if job is None or job.kind != "offline":
+            # Khong co job le nhung co the dang tai ca thu muc -> bom tiep.
+            if getattr(self, "folder_job", None):
+                self._pump_folder_job()
             return
         if job.running:
+            return
+        folder_state = getattr(self, "folder_job", None)
+        if folder_state:
+            # Dang tai ca thu muc: khong rescan tung bai, chi dem roi bom bai ke.
+            self.download_job = None
+            entry = getattr(job, "entry", None)
+            if job.error:
+                folder_state["failed"] += 1
+                folder_state["errors"].append(str(job.error)[:80])
+                get_logger().warning("folder file failed: %s", job.error)
+            else:
+                folder_state["done"] += 1
+                get_logger().info("folder file saved=%s", job.path)
+            folder_state["index"] += 1
+            self._invalidate_saved_rows()
+            self._pump_folder_job()
             return
         self.download_job = None
         entry = getattr(job, "entry", None)
@@ -1890,7 +2593,9 @@ class MusicPlayerApp:
         self._render_footer()
         self._render_saved_toast()
         self._render_download_progress()
-        if self.exit_confirmation:
+        if getattr(self, "pending_confirm", None):
+            self._render_pending_confirm()
+        elif self.exit_confirmation:
             self._render_exit_confirmation()
         if self.quick_menu:
             self._render_quick_menu()
@@ -2318,9 +3023,22 @@ class MusicPlayerApp:
             entry = entries[index]
             if self.library_mode in ("playlists", "favorite_playlists"):
                 favorite = self.collections.is_playlist_favorite(entry)
-                title = ("* " if favorite else "") + entry
-                count = len([track for track in self.tracks if track.folder == entry])
-                detail = "%d tracks" % count
+                is_custom = False
+                try:
+                    is_custom = self.collections.is_custom_playlist(entry)
+                except AttributeError:
+                    pass
+                if is_custom:
+                    title = ("* " if favorite else "") + entry
+                    try:
+                        count = len(self.collections.custom_playlists.get(entry, []))
+                    except AttributeError:
+                        count = 0
+                    detail = "%d tracks" % count
+                else:
+                    title = ("* " if favorite else "") + entry
+                    count = len([track for track in self.tracks if track.folder == entry])
+                    detail = "%d tracks" % count
                 spec = ""
             else:
                 favorite = self.collections.is_track_favorite(entry.path)
@@ -2743,7 +3461,13 @@ class MusicPlayerApp:
         y = (self.height - height) // 2
         self.fill(x - 4, y - 4, width + 8, height + 8, self.ACCENT)
         self.fill(x, y, width, height, self.PANEL)
-        title = "EQUALIZER" if getattr(self, "quick_menu_page", "main") == "equalizer" else "QUICK MENU"
+        page = getattr(self, "quick_menu_page", "main")
+        if page == "equalizer":
+            title = "EQUALIZER"
+        elif page == "playlist_pick":
+            title = "ADD TO PLAYLIST"
+        else:
+            title = "QUICK MENU"
         self.text(title, self.width // 2, y + 22, "title", center=True)
         value_x = x + min(300, width // 2)
         for row, (_, label) in enumerate(shown):
@@ -2778,7 +3502,13 @@ class MusicPlayerApp:
         self.text(state, 24, y + 18, "small", self.MUTED)
         if self.screen == "library":
             if getattr(self, "library_mode", "") == "drive":
-                hint = "A PLAY  X SAVE TO DEVICE  Y MUSIC"
+                try:
+                    if self._is_showing_slot_list():
+                        hint = "A OPEN  X DELETE  Y MUSIC"
+                    else:
+                        hint = "A OPEN  X SAVE/DEL  Y MUSIC"
+                except Exception:
+                    hint = "A OPEN  X SAVE/DEL  Y MUSIC"
             elif getattr(self, "library_mode", "") == "source":
                 hint = "A OPEN  Y DRIVE"
             else:
@@ -2808,6 +3538,33 @@ class MusicPlayerApp:
         self.text("A  EXIT", self.width // 2 - 120, y + 120, "body", self.ACCENT, center=True)
         self.text("B  CANCEL", self.width // 2 + 120, y + 120, "body", center=True)
 
+    def _render_pending_confirm(self):
+        """Hop xac nhan chung (xoa Drive / tai folder / xoa playlist)."""
+        pending = getattr(self, "pending_confirm", None)
+        if not pending:
+            return
+        title = str(pending.get("title", "Confirm"))
+        lines = list(pending.get("lines", []) or [])[:6]
+        width = min(680, self.width - 60)
+        height = 150 + len(lines) * 26
+        x = (self.width - width) // 2
+        y = (self.height - height) // 2
+        self.fill(x - 4, y - 4, width + 8, height + 8, self.ACCENT)
+        self.fill(x, y, width, height, self.PANEL)
+        self.text(
+            self.ellipsize(title, width - 40, "title"),
+            self.width // 2, y + 26, "title", center=True,
+        )
+        line_y = y + 72
+        for line in lines:
+            self.text(
+                self.ellipsize(line, width - 40, "small"),
+                self.width // 2, line_y, "small", self.MUTED, center=True,
+            )
+            line_y += 26
+        self.text("A  OK", self.width // 2 - 120, y + height - 48, "body", self.ACCENT, center=True)
+        self.text("B  CANCEL", self.width // 2 + 120, y + height - 48, "body", center=True)
+
     def _screen_title(self):
         if self.screen == "playing":
             return "NOW PLAYING"
@@ -2833,7 +3590,23 @@ class MusicPlayerApp:
         entries = self._library_entries()
         if self.library_mode in ("playlists", "favorite_playlists"):
             names = set(entries)
-            return [track for track in self.tracks if track.folder in names]
+            folder_tracks = [track for track in self.tracks if track.folder in names]
+            # Them bai trong playlist tu tao (khong theo folder).
+            try:
+                custom_names = [n for n in entries if self.collections.is_custom_playlist(n)]
+            except AttributeError:
+                custom_names = []
+            extra = []
+            seen = {track.path for track in folder_tracks}
+            for name in custom_names:
+                try:
+                    for track in self.collections.custom_tracks(name, self.tracks):
+                        if track.path not in seen:
+                            seen.add(track.path)
+                            extra.append(track)
+                except AttributeError:
+                    pass
+            return folder_tracks + extra
         return entries
 
     @staticmethod

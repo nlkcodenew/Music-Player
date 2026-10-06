@@ -1,4 +1,4 @@
-# Music Player — project status v1.20.4
+# Music Player — project status v1.21.0
 
 > Updated 2026-10-06. Toàn bộ tài liệu hiện tại: `README.md` (tổng quan),
 > `docs/USER_GUIDE.md` (người dùng), `docs/DRIVE_OFFLINE.md` (kiến trúc
@@ -10,11 +10,11 @@
 
 | Item | Value |
 |---|---|
-| Latest release | `v1.20.4` |
-| Release page | `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.20.4` |
+| Latest release | `v1.21.0` |
+| Release page | `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.21.0` |
 | Package | One universal ZIP for Stock + Spruce |
 | Runtime | Bundled Python 3.10 AArch64 + native dependency closure |
-| Unit tests | 218/218 passed (`test_core` + `test_drive_download` + `test_render_smoke`) |
+| Unit tests | 242/242 passed (\	est_core\ + \	est_drive_download\ + \	est_render_smoke\ + \	est_features_v121\) |
 
 Public release gồm `ota-manifest.json`, một universal ZIP + SHA-256 sidecar.
 Cổng kiểm tra local: version, hash, số entry, quyền file, cấm token marker,
@@ -58,7 +58,7 @@ Standard gate:
 
 ```powershell
 py -3 -m compileall -q files tools tests
-py -3 -m unittest tests.test_core tests.test_drive_download tests.test_render_smoke
+py -3 -m unittest tests.test_core tests.test_drive_download tests.test_render_smoke tests.test_features_v121
 py -3 tools/make_release.py
 py -3 tools/verify_release.py
 git diff --check
@@ -66,6 +66,6 @@ git diff --check
 
 ## Session close
 
-- `v1.20.4` là OTA + GitHub latest sau khi release upload hoàn tất.
+- `v1.21.0` là OTA + GitHub latest sau khi release upload hoàn tất.
 - Lỗi máy Stock firmware cũ không có Python 3.8+ đã được loại bỏ bằng runtime
   self-contained; không cần PortMaster hay cập nhật firmware để mở app.
