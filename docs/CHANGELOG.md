@@ -1,6 +1,17 @@
 ﻿# LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.4**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.5**.
+
+## v1.21.5 — Khởi động/thoát nhanh hơn + tự dọn log cũ
+
+- Launcher tin runtime Python đóng kèm đã được release gate kiểm tra, không
+  khởi chạy Python hai lần chỉ để probe version; intro giảm từ 2,2 còn 1,2 giây.
+- Audio probe vẫn cô lập ALSA assertion nhưng chỉ khởi chạy một child process
+  để thử toàn bộ cấu hình, thay vì tối đa sáu lần khởi động Python.
+- Không khởi chạy reporter khi `pending-reports.json` rỗng; đường thoát sạch
+  không còn tốn thêm khoảng 6 giây cho một Python process không có việc.
+- Diagnostics/reporter được import trễ; backup log cũ hơn 14 ngày tự xóa và
+  tổng backup được giới hạn 1 MiB, trong khi log hiện tại vẫn được giữ.
 
 ## v1.21.4 — Sửa phát nhạc Bluetooth BlueALSA trên Stock OS
 

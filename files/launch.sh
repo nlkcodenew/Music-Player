@@ -76,8 +76,13 @@ usable_python() {
 }
 
 find_python() {
+    candidate="$APP/python/bin/python3"
+    if [ -f "$candidate" ]; then
+        [ -x "$candidate" ] || chmod +x "$candidate" 2>/dev/null
+        echo "$candidate"
+        return 0
+    fi
     for candidate in \
-        "$APP/python/bin/python3" \
         "$(command -v python3 2>/dev/null)" \
         "$SDCARD_PATH/System/bin/python3" \
         "$SDCARD_PATH/spruce/flip/bin/python3.10" \
@@ -104,7 +109,6 @@ if [ -z "$PYTHON" ]; then
 fi
 
 echo "python=$PYTHON" >> "$STDIO_LOG"
-"$PYTHON" -c 'import sys; print("python_version=" + sys.version.replace("\n", " "))' >> "$STDIO_LOG" 2>&1
 
 if [ "$MUSIC_PLAYER_OS" = "spruce" ]; then
     export HOME="$APP/data/home"
@@ -211,8 +215,6 @@ while true; do
             "$PYTHON" -m musicplayer.reporter --reason "launcher_exit_$STATUS" --mandatory >> "$STDIO_LOG" 2>&1 || true
         fi
         sync 2>/dev/null || true
-    else
-        "$PYTHON" -m musicplayer.reporter --retry-only >> "$STDIO_LOG" 2>&1 || true
     fi
     [ -f "$APP/.restart" ] || break
 done

@@ -1,11 +1,14 @@
 import logging
 import os
+import time
 from logging.handlers import RotatingFileHandler
 
 
 LOGGER_NAME = "musicplayer"
 MAX_LOG_BYTES = 512 * 1024
 BACKUP_COUNT = 2
+MAX_BACKUP_BYTES = 1024 * 1024
+MAX_BACKUP_AGE_DAYS = 14
 
 
 def init_logging(path, session_path=None, append_session=False):
@@ -69,6 +72,41 @@ def clear_log_backups(paths):
             pass
     if freed:
         get_logger().info("cleared log backups bytes=%d", freed)
+    return freed
+
+def prune_log_backups(paths, now=None, max_age_days=MAX_BACKUP_AGE_DAYS,
+                      max_total_bytes=MAX_BACKUP_BYTES):
+    """Remove stale backups, then keep newest backups within the byte cap."""
+    current_time = time.time() if now is None else float(now)
+    maximum_age = max(0, int(max_age_days)) * 24 * 60 * 60
+    entries = []
+    freed = 0
+    for path in log_backup_paths(paths):
+        try:
+            size = os.path.getsize(path)
+            modified = os.path.getmtime(path)
+        except OSError:
+            continue
+        if maximum_age and current_time - modified > maximum_age:
+            try:
+                os.unlink(path)
+                freed += size
+            except OSError:
+                entries.append((modified, size, path))
+        else:
+            entries.append((modified, size, path))
+    total = sum(size for _modified, size, _path in entries)
+    for _modified, size, path in sorted(entries):
+        if total <= max(0, int(max_total_bytes)):
+            break
+        try:
+            os.unlink(path)
+            total -= size
+            freed += size
+        except OSError:
+            pass
+    if freed:
+        get_logger().info("automatically pruned log backups bytes=%d", freed)
     return freed
 
 

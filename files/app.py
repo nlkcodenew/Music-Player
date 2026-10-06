@@ -6,12 +6,18 @@ import os
 import sys
 import traceback
 
-from musicplayer.diagnostics import collect_diagnostics, write_diagnostics
 from musicplayer import APP_VERSION
 from musicplayer.library import scan_library
-from musicplayer.logger import clear_log_backups, get_logger, init_logging
+from musicplayer.logger import get_logger, init_logging, prune_log_backups
 from musicplayer.paths import RuntimePaths
-from musicplayer.reporter import queue_report, retry_pending
+
+def pending_reports_waiting(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            pending = json.load(handle)
+        return isinstance(pending, list) and bool(pending)
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def parse_args():
@@ -34,7 +40,7 @@ def main():
     )
     log = get_logger()
     try:
-        clear_log_backups(paths)
+        prune_log_backups(paths)
     except Exception as error:
         log.warning("log prune failed: %s", error)
     log.info(
@@ -44,9 +50,12 @@ def main():
     if args.background:
         from musicplayer.background import run_background
         return run_background(paths)
-    retry_pending(paths)
+    if pending_reports_waiting(paths.pending_reports_file):
+        from musicplayer.reporter import retry_pending
+        retry_pending(paths)
 
     if args.diagnose:
+        from musicplayer.diagnostics import collect_diagnostics, write_diagnostics
         report = collect_diagnostics(paths)
         output = write_diagnostics(paths, report)
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -72,6 +81,7 @@ if __name__ == "__main__":
     except Exception:
         error = traceback.format_exc()
         try:
+            from musicplayer.reporter import queue_report, retry_pending
             init_logging(
                 paths.log_file, getattr(paths, "session_log_file", None), append_session=True
             )

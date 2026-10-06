@@ -43,7 +43,6 @@ from .leds import LedController
 from .library import Track
 from .logger import clear_log_backups, get_logger, log_backup_bytes
 from .lyrics import load_lyrics
-from .reporter import queue_report, retry_pending
 from .settings import Settings
 from .sleep_timer import SleepTimer
 from .sdl_runtime import (
@@ -72,7 +71,25 @@ from .sdl_runtime import (
     SDLRuntime,
     font_candidates,
 )
-from .updater import apply_update, fetch_manifest, update_available
+def queue_report(*args, **kwargs):
+    from .reporter import queue_report as submit
+    return submit(*args, **kwargs)
+
+def retry_pending(*args, **kwargs):
+    from .reporter import retry_pending as retry
+    return retry(*args, **kwargs)
+
+def fetch_manifest(*args, **kwargs):
+    from .updater import fetch_manifest as fetch
+    return fetch(*args, **kwargs)
+
+def update_available(*args, **kwargs):
+    from .updater import update_available as available
+    return available(*args, **kwargs)
+
+def apply_update(*args, **kwargs):
+    from .updater import apply_update as apply
+    return apply(*args, **kwargs)
 
 
 class MusicPlayerApp:
@@ -2791,7 +2808,7 @@ class MusicPlayerApp:
             return
         glyphs = self._build_intro_glyphs()
         try:
-            duration = 2.2
+            duration = 1.2
             start = time.monotonic()
             event = SDL_Event()
             while True:

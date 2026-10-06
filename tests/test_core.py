@@ -813,6 +813,17 @@ class AudioLogicTests(unittest.TestCase):
         self.assertEqual(player.output_device, "audiocodec")
         self.assertEqual(runtime.attempts[-1][2], b"audiocodec")
 
+    def test_audio_probe_uses_one_child_for_all_configurations(self):
+        runtime = FakeAudioRuntime([0])
+        player = AudioPlayer(runtime, [], self.audio_settings())
+        completed = mock.Mock(returncode=0, stdout="FAIL 44100 1024 busy\nOK 48000 1024\n", stderr="")
+        with mock.patch.dict(os.environ, {"MUSIC_PLAYER_AUDIO_PROBE": "1"}), \
+                mock.patch("musicplayer.audio.subprocess.run", return_value=completed) as run:
+            result = player._audio_probe(None)
+        self.assertEqual(result[:2], (48000, 1024))
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0][-2:], ["default", FILES])
+
     def test_transient_not_playing_state_does_not_restart_with_finished_hook(self):
         runtime = FakeRuntime()
         runtime.Mix_HookMusicFinished = mock.Mock()
@@ -2656,6 +2667,53 @@ class LogPruneTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(main_log))
             self.assertFalse(os.path.exists(main_log + ".1"))
             self.assertEqual(log_backup_bytes(paths), 0)
+
+    def test_automatic_prune_removes_stale_and_oldest_oversized_backups(self):
+        from musicplayer.logger import prune_log_backups
+        with tempfile.TemporaryDirectory() as root:
+            main_log = os.path.join(root, "music-player.log")
+            stdio_log = os.path.join(root, "stdio.log")
+            paths = mock.Mock(log_file=main_log, stdio_log_file=stdio_log)
+            now = 2_000_000.0
+            backups = (
+                (main_log + ".1", 400, now - 15 * 24 * 60 * 60),
+                (main_log + ".2", 400, now - 300),
+                (stdio_log + ".1", 400, now - 200),
+                (stdio_log + ".2", 400, now - 100),
+            )
+            for path, size, modified in backups:
+                with open(path, "wb") as handle:
+                    handle.write(b"x" * size)
+                os.utime(path, (modified, modified))
+
+            freed = prune_log_backups(
+                paths, now=now, max_age_days=14, max_total_bytes=900
+            )
+
+            self.assertEqual(freed, 800)
+            self.assertFalse(os.path.exists(main_log + ".1"))
+            self.assertFalse(os.path.exists(main_log + ".2"))
+            self.assertTrue(os.path.exists(stdio_log + ".1"))
+            self.assertTrue(os.path.exists(stdio_log + ".2"))
+
+    def test_empty_pending_report_file_uses_fast_path(self):
+        import app as app_module
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "pending-reports.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump([], handle)
+            self.assertFalse(app_module.pending_reports_waiting(path))
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump([{"reason": "test"}], handle)
+            self.assertTrue(app_module.pending_reports_waiting(path))
+
+    def test_launcher_uses_fast_bluealsa_and_clean_exit_paths(self):
+        with open(os.path.join(FILES, "launch.sh"), encoding="utf-8") as handle:
+            launcher = handle.read()
+        self.assertIn("export MUSIC_PLAYER_AUDIO_PROBE=1", launcher)
+        self.assertNotIn("export MUSIC_PLAYER_AUDIO_PROBE=0", launcher)
+        self.assertNotIn("python_version=", launcher)
+        self.assertNotIn('else\n        "$PYTHON" -m musicplayer.reporter --retry-only', launcher)
 
 
 class DrivePrivacyTests(unittest.TestCase):

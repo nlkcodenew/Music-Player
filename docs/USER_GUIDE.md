@@ -150,6 +150,7 @@ yêu thích, log **không bao giờ bị xóa** khi cập nhật.
 | App báo AUDIO OFF | Firmware chưa mở được audio — thoát app dùng audio khác rồi mở lại |
 | Thẻ báo đầy | Quick Menu → Clear Drive cache (bộ đệm stream tối đa 1 GB, tự xóa cũ nhất) |
 | Kết nối Bluetooth nhưng báo `Audio unavailable` / log có `snd_mask_leave` | Cập nhật v1.21.4: app dùng PCM BlueALSA và ALSA hệ thống tương thích plugin firmware |
+| Mở hoặc thoát app lâu | Cập nhật v1.21.5: bỏ probe/reporter dư, intro ngắn hơn; backup log cũ được tự dọn theo tuổi và dung lượng |
 
 ## 8. Lấy log gửi báo lỗi
 

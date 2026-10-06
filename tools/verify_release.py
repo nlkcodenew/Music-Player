@@ -65,7 +65,10 @@ def verify_archive(path, manifest):
             if not archive.getinfo(launcher).external_attr >> 16 & stat.S_IXUSR:
                 raise SystemExit("not executable: %s" % launcher)
             launcher_data = archive.read(launcher)
-            for marker in (b"AUDIODEV=bluealsa", b"/usr/lib/libasound.so.2"):
+            for marker in (
+                b"AUDIODEV=bluealsa", b"/usr/lib/libasound.so.2",
+                b"MUSIC_PLAYER_AUDIO_PROBE=1",
+            ):
                 if marker not in launcher_data:
                     raise SystemExit("Bluetooth audio fallback missing from %s" % launcher)
             for relative in (

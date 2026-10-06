@@ -10,7 +10,6 @@ import urllib.request
 
 from . import APP_VERSION
 from .logger import get_logger
-from .reporter import queue_report
 from .ssl_context import verified_context
 
 
@@ -162,6 +161,7 @@ def apply_update(paths, manifest):
             os.fsync(handle.fileno())
         _fsync_directory(paths.app_dir)
     except Exception as error:
+        from .reporter import queue_report
         queue_report(paths, "ota_apply_failed", str(error))
         raise
     finally:
