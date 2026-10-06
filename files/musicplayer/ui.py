@@ -2650,6 +2650,18 @@ class MusicPlayerApp:
             return
         self._render_download_strip(job)
 
+    def _download_strip_visible(self):
+        """Dai strip dang hien (khong co) -> list phai xuong de khong che."""
+        job = getattr(self, "download_job", None)
+        if job is None or job.done:
+            return False
+        if getattr(self, "screen", "") != "library":
+            return False
+        mode = getattr(self, "library_mode", "")
+        if mode == "source":
+            return False
+        return not self._download_drawn_in_row()
+
     def _download_drawn_in_row(self):
         """Thanh % da duoc ve trong mot dong cua list dang xem chua."""
         job = getattr(self, "download_job", None)
@@ -2667,12 +2679,20 @@ class MusicPlayerApp:
         return any(self._download_job_for_row(row) is not None for row in rows)
 
     def _download_job_for_row(self, row):
-        """Job tai offline dang chay cho dung dong nay, hoac None."""
+        """Job tai Drive (offline hoac stream) dang chay cho dung dong nao."""
         job = getattr(self, "download_job", None)
-        if job is None or job.done or job.kind != "offline":
+        if job is None or job.done:
             return None
         entry = getattr(job, "entry", None)
+        # Stream job khi phat thu Drive khong co entry that -> chi ve strip.
         if entry is None:
+            return None
+        if job.kind != "offline":
+            # Stream buffer: chi khop dong dua tren file_id/ten file.
+            row_id = getattr(row, "file_id", "")
+            if row_id:
+                return job if row_id == getattr(entry, "file_id", "") else None
+            # Khong co file_id (dong library local): khong khop stream.
             return None
         row_id = getattr(row, "file_id", "")
         if row_id:
@@ -2717,11 +2737,16 @@ class MusicPlayerApp:
             self.fill(x, y + 36, max(6, int(bar_width * ratio)), 7, fill_color)
 
     def _render_download_strip(self, job):
-        """Dai nho duoi header cho truong hop khong co dong nao de ve %."""
+        """Dai nho duoi header cho truong hop khong co dong nao de ve %.
+
+        No nam ngay duoi breadcrumb (y=74) de khong che dong nhac dau tien
+        (list bat dau y=104). Tang chieu cao de chu BUFFERING giua dai,
+        thanh % nam rieng o duoi.
+        """
         width = self.width - 56
         x = 28
         y = 72
-        height = 30
+        height = 52
         self.fill(x, y, width, height, self.PANEL)
         self.fill(x, y, 4, height, self.ACCENT)
         caption = "SAVING TO DEVICE" if job.kind == "offline" else "BUFFERING"
@@ -2735,18 +2760,20 @@ class MusicPlayerApp:
         caption_width = self.measure(caption, "small")[0]
         note_width = self.measure(note, "small")[0]
         transferred_width = self.measure(transferred, "small")[0]
-        self.text(caption, x + 14, y + 8, "small", self.MUTED)
-        self.text(note, x + width - 14 - note_width, y + 8, "small", self.ACCENT)
-        transferred_x = x + width - 14 - note_width - transferred_width - 16
-        self.text(transferred, transferred_x, y + 8, "small", self.MUTED)
+        # Dong 1: chu nam o giua dai, khong nam len breadcrumb/dong nhac.
+        text_y = y + 16
+        self.text(caption, x + 14, text_y, "small", self.MUTED)
         title_x = x + 14 + caption_width + 10
+        transferred_x = x + width - 14 - note_width - transferred_width - 16
         title_room = transferred_x - title_x - 12
         self.text(
             self.ellipsize(job.title or "", max(40, title_room), "small"),
-            title_x, y + 8, "small", self.TEXT,
+            title_x, text_y, "small", self.TEXT,
         )
-        # Thanh % mong chay suot dai dai nho.
-        bar_y = y + height - 5
+        self.text(note, x + width - 14 - note_width, text_y, "small", self.ACCENT)
+        self.text(transferred, transferred_x, text_y, "small", self.MUTED)
+        # Thanh % mong o duoi cung cua dai, khong chong len text.
+        bar_y = y + height - 6
         self.fill(x, bar_y, width, 4, self.TRACK)
         ratio = max(0.0, min(1.0, job.percent))
         if ratio > 0:
@@ -3012,7 +3039,7 @@ class MusicPlayerApp:
         if self.selection >= self.scroll + rows:
             self.scroll = self.selection - rows + 1
         spec_width = 150
-        y = 104
+        y = 128 if self._download_strip_visible() else 104
         for index in range(self.scroll, min(len(entries), self.scroll + rows)):
             selected = index == self.selection
             if selected:
@@ -3079,7 +3106,7 @@ class MusicPlayerApp:
             )
         except Exception:
             pass
-        y = 104
+        y = 128 if self._download_strip_visible() else 104
         for index, (title, detail) in enumerate(rows):
             selected = index == getattr(self, "selection", 0)
             if selected:
@@ -3168,7 +3195,7 @@ class MusicPlayerApp:
         if self.selection >= self.scroll + visible_rows:
             self.scroll = self.selection - visible_rows + 1
         spec_width = 150
-        y = 104
+        y = 128 if self._download_strip_visible() else 104
         for index in range(self.scroll, min(len(rows), self.scroll + visible_rows)):
             selected = index == self.selection
             if selected:
