@@ -6,3 +6,6 @@
 *.pem text eol=lf
 *.png binary
 *.so binary
+*.so.* binary
+*.zip binary
+files/python/bin/python3.10 binary

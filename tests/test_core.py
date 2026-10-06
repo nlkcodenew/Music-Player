@@ -108,7 +108,9 @@ class PathTests(unittest.TestCase):
         )
         directories = library_directories(paths)
         native_sdl = os.path.join("/sd", "spruce", "brick", "sdl2")
+        bundled_sdl = os.path.join(paths.app_dir, "libs")
         mali_runtime = os.path.join("/sd", "App", "PyUI", "dll-mali")
+        self.assertLess(directories.index(native_sdl), directories.index(bundled_sdl))
         self.assertLess(directories.index(native_sdl), directories.index(mali_runtime))
         self.assertLess(directories.index("/usr/lib"), directories.index(mali_runtime))
 
@@ -2633,6 +2635,55 @@ class DrivePrivacyTests(unittest.TestCase):
         from musicplayer.updater import PROTECTED
         for protected in ("settings.json", "drive-cache.json"):
             self.assertIn(protected, PROTECTED)
+
+    def test_release_is_one_universal_self_contained_package(self):
+        import sys as _sys
+        sys_path = os.path.join(ROOT, "tools")
+        if sys_path not in _sys.path:
+            _sys.path.insert(0, sys_path)
+        import make_release
+        self.assertEqual(make_release.PACKAGE_ROOTS, ("Apps/MusicPlayer", "App/MusicPlayer"))
+        self.assertEqual(make_release.ARCHIVE_NAME, "trimui-music-player-v%s-universal.zip")
+        payload = {relative for relative, unused_source in make_release.payload_files()}
+        for required in (
+            "python/bin/python3", "python/bin/python3.10",
+            "python/lib/ld-linux-aarch64.so.1", "python/lib/libpython3.10.so.1.0",
+            "python/lib/libssl.so.1.1", "python/lib/libcrypto.so.1.1",
+            "python/lib/libffi.so.8", "python/lib/libz.so.1",
+            "python/lib/python310.zip",
+        ):
+            self.assertIn(required, payload)
+
+    def test_bundled_native_runtime_has_closed_elf_dependencies(self):
+        import sys as _sys
+        sys_path = os.path.join(ROOT, "tools")
+        if sys_path not in _sys.path:
+            _sys.path.insert(0, sys_path)
+        from vendor_python_runtime import _elf_needed
+        runtime_libs = os.path.join(FILES, "python", "lib")
+        sdl_libs = os.path.join(FILES, "libs")
+        present = set(os.listdir(runtime_libs)) | set(os.listdir(sdl_libs))
+        native = [
+            os.path.join(FILES, "python", "bin", "python3.10"),
+            *(
+                os.path.join(runtime_libs, name)
+                for name in os.listdir(runtime_libs)
+                if os.path.isfile(os.path.join(runtime_libs, name))
+                and not name.endswith(".zip")
+            ),
+            *(
+                os.path.join(sdl_libs, name)
+                for name in os.listdir(sdl_libs)
+                if os.path.isfile(os.path.join(sdl_libs, name))
+            ),
+        ]
+        dynamic = os.path.join(runtime_libs, "python3.10", "lib-dynload")
+        native.extend(os.path.join(dynamic, name) for name in os.listdir(dynamic))
+        missing = {
+            dependency for path in native for dependency in _elf_needed(path)
+            if dependency not in present
+        }
+        self.assertEqual(missing, set())
 
     def test_drive_ids_never_leave_the_device_in_reports(self):
         from musicplayer.reporter import _drive_secrets, _submit

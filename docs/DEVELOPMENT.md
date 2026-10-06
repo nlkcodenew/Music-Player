@@ -60,15 +60,17 @@ Sửa layout xong thì mở PNG kiểm tra bằng mắt: list Drive có % trong 
 badge, dải strip ở Now Playing, toast tên đầy đủ, thư viện local, bản
 1280x720. `dist/` đã gitignore nên ảnh không lọt vào release.
 
-## 4. Release — 37 file OTA, 2 gói
+## 4. Release — một ZIP universal
 
 ```powershell
-py -3 tools/make_release.py          # manifest.json + 2 ZIP + .sha256 + ota-manifest.json
+py -3 tools/vendor_python_runtime.py # lấy Python ARM64 từ TrimUI SDK
+py -3 tools/make_release.py          # manifest + universal ZIP + SHA-256
 py -3 tools/verify_release.py        # entry, hash, quyền, cấm token, cấm user-data
 py -3 tools/make_github_release.py   # tạo Release + upload asset (token từ git credential)
 ```
 
-- `PACKAGES`: `stock → Apps/MusicPlayer`, `spruce → App/MusicPlayer`.
+- Universal ZIP chứa `Apps/MusicPlayer` cho Stock và `App/MusicPlayer` cho
+  Spruce; mỗi layout đều có runtime Python 3.10 ARM64 hoàn chỉnh.
 - `EXCLUDED` (không bao giờ đóng gói/OTA đè): `settings.json`,
   `collections.json`, `identity.json`, `pending-reports.json`, log, cache,
   trạng thái background/drive.

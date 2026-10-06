@@ -45,7 +45,7 @@ if [ -d "$SDCARD_PATH/spruce" ]; then
     export MUSIC_PLAYER_OS=spruce
     SPRUCE_SDL_PATH="$SDCARD_PATH/spruce/brick/sdl2"
     export PYSDL2_DLL_PATH="$SPRUCE_SDL_PATH:$SDCARD_PATH/App/PyUI/dll:$APP/libs"
-    export LD_LIBRARY_PATH="$APP/libs:$SPRUCE_SDL_PATH:/usr/lib64:/usr/lib:/lib:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$LD_LIBRARY_PATH"
+    export LD_LIBRARY_PATH="$SPRUCE_SDL_PATH:$APP/libs:/usr/lib64:/usr/lib:/lib:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$LD_LIBRARY_PATH"
 else
     export MUSIC_PLAYER_OS=stock
     export LD_LIBRARY_PATH="$APP/libs:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:/usr/lib64:/usr/lib:/lib:$LD_LIBRARY_PATH"
@@ -66,8 +66,8 @@ usable_python() {
 
 find_python() {
     for candidate in \
-        "$(command -v python3 2>/dev/null)" \
         "$APP/python/bin/python3" \
+        "$(command -v python3 2>/dev/null)" \
         "$SDCARD_PATH/System/bin/python3" \
         "$SDCARD_PATH/spruce/flip/bin/python3.10" \
         "$SDCARD_PATH/spruce/bin/python/bin/python3.10" \
@@ -86,8 +86,8 @@ PYTHON="$(find_python)"
 if [ -z "$PYTHON" ]; then
     {
         echo "Music Player could not start."
-        echo "Python 3.8 or newer was not found."
-        echo "Checked $SDCARD_PATH/System/bin/python3 and firmware paths."
+        echo "The bundled Python 3.10 runtime is missing or damaged."
+        echo "Reinstall the complete Music Player release ZIP."
     } | tee -a "$LOG_FILE" >> "$STDIO_LOG"
     exit 1
 fi

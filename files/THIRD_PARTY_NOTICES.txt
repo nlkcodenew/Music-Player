@@ -27,3 +27,14 @@ https://github.com/libsdl-org/SDL_mixer/tree/release-2.6.3
 
 The bundled dr_flac decoder is dual-licensed as public domain or MIT-0. Its
 license text is included in SDL2_mixer's `src/codecs/dr_libs` source directory.
+
+Python and runtime libraries
+============================
+
+The release bundles Python 3.10 for AArch64. The complete Python Software
+Foundation license is included at `python/LICENSE.python.txt`.
+
+The bundled runtime also includes GNU C Library components (LGPL-2.1-or-later),
+OpenSSL 1.1 (OpenSSL/SSLeay licenses), libffi (MIT), and zlib (zlib license),
+copied from the official TrimUI TG5050 SDK sysroot. Corresponding source and
+license materials are available from the TrimUI SDK and upstream projects.

@@ -1,4 +1,4 @@
-# HƯỚNG DẪN SỬ DỤNG — Music Player v1.20.2
+# HƯỚNG DẪN SỬ DỤNG — Music Player v1.20.3
 
 > Dành cho người dùng cuối trên TrimUI Brick Pro (Stock OS) và Smart Pro S
 > (Spruce OS). Tài liệu kỹ thuật cho dev nằm ở `DRIVE_OFFLINE.md`,
@@ -6,11 +6,12 @@
 
 ## 1. Cài đặt
 
-1. Vào trang Release, tải **đúng 1 file** theo máy:
-   - Stock OS: `trimui-music-player-vX.Y.Z-stock.zip`
-   - Spruce OS: `trimui-music-player-vX.Y.Z-spruce.zip`
+1. Vào trang Release, tải **một file duy nhất**:
+   `trimui-music-player-vX.Y.Z-universal.zip` cho cả Stock OS và Spruce OS.
 2. Giải nén thẳng ra **gốc thẻ nhớ**. Không copy file lẻ sang thư mục khác.
 3. Stock OS sẽ có `/Apps/MusicPlayer/`, Spruce OS có `/App/MusicPlayer/`.
+   Gói đã kèm Python 3.10 ARM64 và thư viện runtime, không cần cài Python,
+   PortMaster hoặc phụ thuộc bản firmware để mở app.
 4. Chép nhạc vào thư mục `Music/` ở gốc thẻ (hoặc `Media/Music`,
    `Roms/MUSIC`, `ROMS/MUSIC` — app tự tìm thư mục đầu tiên tồn tại).
 

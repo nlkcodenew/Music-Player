@@ -4,10 +4,10 @@ Self-contained music player for TrimUI Brick Pro Stock OS and Spruce OS
 (Smart Pro S). No NextUI libraries required, no hidden directory at the
 SD-card root.
 
-## Highlights (v1.20.2)
+## Highlights (v1.20.3)
 
 - Recursive SD-card scan for WAV, MP3, OGG, FLAC, OPUS — plays through the
-  firmware SDL2_mixer with full controller navigation.
+  bundled SDL2/SDL2_ttf/SDL2_mixer runtime with full controller navigation.
 - **Google Drive**: browse shared folders, stream tracks, and save them to the
   device for offline listening. Multiple Drive slots (Drive 1–N), keyless
   public-folder access, optional API key.
@@ -23,6 +23,8 @@ SD-card root.
 - Three-band equalizer with presets; USB DAC auto-preference with safe
   fallback; Bluetooth/BlueALSA support.
 - In-place OTA updates over verified TLS (SHA-256, atomic writes).
+- Bundled Python 3.10 AArch64 runtime, glibc loader, OpenSSL, ctypes and zlib;
+  no Python package or matching runtime libraries are required from firmware.
 - Diagnostics via a credential-free HTTPS relay — no GitHub token ever lives
   in the app, ZIP, manifest, SD card, or request URL. Fatal crashes are
   reported automatically when online (or queued until the next launch);
@@ -33,14 +35,13 @@ are not included.
 
 ## Install
 
-Download exactly one package from the
+Download the single universal package from the
 [latest release](https://github.com/nlkcodenew/Music-Player/releases/latest):
 
-- Stock OS: `trimui-music-player-vX.Y.Z-stock.zip`
-- Spruce OS: `trimui-music-player-vX.Y.Z-spruce.zip`
+- Stock OS + Spruce OS: `trimui-music-player-vX.Y.Z-universal.zip`
 
-Extract the selected ZIP directly to the SD-card root. Do not copy files
-between folders manually.
+Extract the ZIP directly to the SD-card root. It contains the native menu
+directory for both systems; each OS ignores the other directory.
 
 Stock OS installs one self-contained directory:
 
@@ -52,6 +53,7 @@ Stock OS installs one self-contained directory:
   icon.png
   certs/
   musicplayer/
+  python/
 ```
 
 Spruce OS installs the same application in its native menu directory:

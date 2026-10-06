@@ -19,9 +19,10 @@ def library_directories(paths):
     pyui_libs = os.path.join(paths.sdcard_path, "App", "PyUI", "dll")
     pyui_mali_libs = os.path.join(paths.sdcard_path, "App", "PyUI", "dll-mali")
     if paths.os_name == "spruce":
+        spruce_sdl = os.path.join(paths.sdcard_path, "spruce", "brick", "sdl2")
         return (
+            spruce_sdl,
             app_libs,
-            os.path.join(paths.sdcard_path, "spruce", "brick", "sdl2"),
             "/usr/lib64",
             "/usr/lib",
             "/lib",
@@ -32,7 +33,6 @@ def library_directories(paths):
             pyui_mali_libs,
         )
     return (
-        app_libs,
         system_libs,
         "/usr/trimui/lib",
         pyui_mali_libs,
@@ -40,6 +40,7 @@ def library_directories(paths):
         "/usr/lib64",
         "/usr/lib",
         "/lib",
+        app_libs,
     )
 
 

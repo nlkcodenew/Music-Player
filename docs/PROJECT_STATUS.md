@@ -1,6 +1,6 @@
-# Music Player — project status v1.20.1
+# Music Player — project status v1.20.3
 
-> Updated 2026-10-03. Toàn bộ tài liệu hiện tại: `README.md` (tổng quan),
+> Updated 2026-10-06. Toàn bộ tài liệu hiện tại: `README.md` (tổng quan),
 > `docs/USER_GUIDE.md` (người dùng), `docs/DRIVE_OFFLINE.md` (kiến trúc
 > Drive), `docs/DEVELOPMENT.md` (dev), `docs/CHANGELOG.md` (lịch sử bản).
 > Các file `STEP_A_DONE.md`, `VISUALS_AND_DRIVE_PLAN.md` là archive của bước
@@ -10,21 +10,21 @@
 
 | Item | Value |
 |---|---|
-| Latest release | `v1.20.1` |
-| Commits/tags | `4298db0` / `v1.20.1` (+ `main` đã push) |
-| Release page | `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.20.1` |
-| OTA files | 37 |
-| Stock/Spruce ZIP entries | 37 / 37 (verified) |
-| Unit tests | 211/211 passed (`test_core` + `test_drive_download` + `test_render_smoke`) |
+| Latest release | `v1.20.3` |
+| Release page | `https://github.com/nlkcodenew/Music-Player/releases/tag/v1.20.3` |
+| Package | One universal ZIP for Stock + Spruce |
+| Runtime | Bundled Python 3.10 AArch64 + native dependency closure |
+| Unit tests | 216/216 passed (`test_core` + `test_drive_download` + `test_render_smoke`) |
 
-Public release gồm `ota-manifest.json`, 2 ZIP platform + 2 SHA-256 sidecar.
+Public release gồm `ota-manifest.json`, một universal ZIP + SHA-256 sidecar.
 Cổng kiểm tra local: version, hash, số entry, quyền file, cấm token marker,
 cấm user-data trong OTA/ZIP.
 
 ## Platform packaging
 
-- Stock OS: `Apps/MusicPlayer`. Spruce OS: `App/MusicPlayer`. Cùng 37 file
-  OTA + runtime SDL2_mixer AArch64 bundled.
+- Stock OS: `Apps/MusicPlayer`. Spruce OS: `App/MusicPlayer`. Hai layout nằm
+  chung trong một ZIP và đều kèm Python 3.10 ARM64, glibc/OpenSSL/libffi/zlib
+  dependency closure cùng SDL2_mixer AArch64.
 - Không OTA đè, không đóng gói: `settings.json`, `collections.json`,
   `identity.json`, `pending-reports.json`, log, `drive-cache.json`, trạng
   thái background.
@@ -34,7 +34,8 @@ cấm user-data trong OTA/ZIP.
 Header hiện `vX.Y.Z | ID: MP-xxxxxxxx`; ID ổn định trong
 `data/identity.json`, xuất hiện nguyên vẹn trong Issue để đối chiếu, không lộ
 serial/MAC. `Send Diagnostic` là consent tường minh cho từng lần gửi;
-`Auto-report Errors` mặc định off. Client không chứa token/repo private nào;
+crash nghiêm trọng luôn được gửi khi có mạng; `Auto-report Errors` cho lỗi
+không nghiêm trọng mặc định off. Client không chứa token/repo private nào;
 relay duy nhất: `https://trimui-music-player-issue-relay.issue-relay.workers.dev/report`
 (token chỉ là Cloudflare Worker secret; xoay token không cần release app).
 
@@ -49,7 +50,8 @@ Spruce SmartProS nạp SDL2/SDL2_ttf từ bind path của Spruce trước `dll-m
 1. Luôn verify TLS cert + hostname.
 2. Không token/secret/tên repo private trong app, manifest, ZIP.
 3. User-data/runtime không vào manifest/ZIP.
-4. Consent tường minh: auto-report mặc định off.
+4. Crash nghiêm trọng được gửi bắt buộc; auto-report lỗi không nghiêm trọng
+   mặc định off.
 5. Đổi version cho mọi thay đổi payload; không retag bản đã publish.
 
 Standard gate:
@@ -64,7 +66,6 @@ git diff --check
 
 ## Session close
 
-- `v1.20.1` là OTA + GitHub latest. `main`, `origin/main`, tag `v1.20.1`
-  đồng bộ sau release upload OK (5/5 asset).
-- Không còn task mở: treo Drive (v1.19.0), crash badge (v1.19.1), progress
-  trong dòng + toast tên đầy đủ (v1.20.x) đều đã xong và có test gác.
+- `v1.20.3` là OTA + GitHub latest sau khi release upload hoàn tất.
+- Lỗi máy Stock firmware cũ không có Python 3.8+ đã được loại bỏ bằng runtime
+  self-contained; không cần PortMaster hay cập nhật firmware để mở app.

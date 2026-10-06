@@ -9,11 +9,10 @@ import sys
 import urllib.parse
 import zipfile
 
+from vendor_python_runtime import _elf_needed
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKAGES = {
-    "stock": "Apps/MusicPlayer",
-    "spruce": "App/MusicPlayer",
-}
+PACKAGE_ROOTS = ("Apps/MusicPlayer", "App/MusicPlayer")
 EXCLUDED = {
     "secrets.json", "settings.json", "collections.json", "pending-reports.json", "identity.json",
     "display-restore.json", "music-player.log", "music-player-stdio.log",
@@ -25,24 +24,34 @@ EXCLUDED = {
 TOKEN_MARKERS = (b"github_pat_", b"ghp_", b"MUSIC_PLAYER_GITHUB_TOKEN")
 
 
-def verify_archive(path, package_root, manifest):
+def verify_archive(path, manifest):
     with zipfile.ZipFile(path) as archive:
         names = set(archive.namelist())
-        required = {
-            "%s/app.py" % package_root,
-            "%s/launch.sh" % package_root,
-            "%s/config.json" % package_root,
-            "%s/icon.png" % package_root,
-            "%s/LICENSE.txt" % package_root,
-            "%s/certs/cacert.pem" % package_root,
-            "%s/musicplayer/ui.py" % package_root,
-            "%s/libs/libSDL2_mixer-2.0.so" % package_root,
-            "%s/THIRD_PARTY_NOTICES.txt" % package_root,
-        }
+        required = set()
+        for package_root in PACKAGE_ROOTS:
+            required.update({
+                "%s/app.py" % package_root,
+                "%s/launch.sh" % package_root,
+                "%s/config.json" % package_root,
+                "%s/icon.png" % package_root,
+                "%s/LICENSE.txt" % package_root,
+                "%s/certs/cacert.pem" % package_root,
+                "%s/musicplayer/ui.py" % package_root,
+                "%s/libs/libSDL2_mixer-2.0.so" % package_root,
+                "%s/python/bin/python3" % package_root,
+                "%s/python/bin/python3.10" % package_root,
+                "%s/python/lib/ld-linux-aarch64.so.1" % package_root,
+                "%s/python/lib/libpython3.10.so.1.0" % package_root,
+                "%s/python/lib/python310.zip" % package_root,
+                "%s/THIRD_PARTY_NOTICES.txt" % package_root,
+            })
         missing = required - names
         if missing:
             raise SystemExit("%s missing: %s" % (os.path.basename(path), ", ".join(sorted(missing))))
-        outside = [name for name in names if not name.startswith(package_root + "/")]
+        outside = [
+            name for name in names
+            if not any(name.startswith(package_root + "/") for package_root in PACKAGE_ROOTS)
+        ]
         if outside:
             raise SystemExit("files outside app directory in %s: %s" % (os.path.basename(path), outside))
         forbidden = [
@@ -51,24 +60,62 @@ def verify_archive(path, package_root, manifest):
         ]
         if forbidden:
             raise SystemExit("private/runtime files present: %s" % forbidden)
-        launcher = "%s/launch.sh" % package_root
-        if not archive.getinfo(launcher).external_attr >> 16 & stat.S_IXUSR:
-            raise SystemExit("not executable: %s" % launcher)
-        mixer = archive.read("%s/libs/libSDL2_mixer-2.0.so" % package_root)
-        if not mixer.startswith(b"\x7fELF") or mixer[4] != 2 or mixer[5] != 1:
-            raise SystemExit("bundled SDL2_mixer is not a 64-bit little-endian ELF")
-        if int.from_bytes(mixer[18:20], "little") != 183:
-            raise SystemExit("bundled SDL2_mixer is not built for AArch64")
-        if b"DRFLAC" not in mixer or b"Mix_SetPostMix" not in mixer:
-            raise SystemExit("bundled SDL2_mixer lacks FLAC or post-mix support")
-        for item in manifest["files"]:
-            name = "%s/%s" % (package_root, item["path"])
-            if name not in names:
-                raise SystemExit("manifest file missing from %s: %s" % (os.path.basename(path), name))
-            data = archive.read(name)
-            if len(data) != item["size"] or hashlib.sha256(data).hexdigest() != item["sha256"]:
-                raise SystemExit("manifest mismatch in %s: %s" % (os.path.basename(path), name))
-        if len(names) != len(manifest["files"]):
+        for package_root in PACKAGE_ROOTS:
+            launcher = "%s/launch.sh" % package_root
+            if not archive.getinfo(launcher).external_attr >> 16 & stat.S_IXUSR:
+                raise SystemExit("not executable: %s" % launcher)
+            for relative in (
+                "python/bin/python3", "python/bin/python3.10",
+                "python/lib/ld-linux-aarch64.so.1",
+            ):
+                name = "%s/%s" % (package_root, relative)
+                if not archive.getinfo(name).external_attr >> 16 & stat.S_IXUSR:
+                    raise SystemExit("not executable: %s" % name)
+            for relative in ("libs/libSDL2_mixer-2.0.so", "python/bin/python3.10"):
+                binary = archive.read("%s/%s" % (package_root, relative))
+                if not binary.startswith(b"\x7fELF") or binary[4] != 2 or binary[5] != 1:
+                    raise SystemExit("not a 64-bit little-endian ELF: %s" % relative)
+                if int.from_bytes(binary[18:20], "little") != 183:
+                    raise SystemExit("not built for AArch64: %s" % relative)
+            mixer = archive.read("%s/libs/libSDL2_mixer-2.0.so" % package_root)
+            if b"DRFLAC" not in mixer or b"Mix_SetPostMix" not in mixer:
+                raise SystemExit("bundled SDL2_mixer lacks FLAC or post-mix support")
+            native_prefixes = (
+                "%s/libs/" % package_root,
+                "%s/python/bin/python3.10" % package_root,
+                "%s/python/lib/" % package_root,
+            )
+            native_names = {
+                os.path.basename(name) for name in names
+                if name.startswith(native_prefixes[0]) or name == native_prefixes[1]
+                or name.startswith(native_prefixes[2]) and not name.endswith(".zip")
+            }
+            for name in names:
+                if not (
+                    name.startswith(native_prefixes[0]) or name == native_prefixes[1]
+                    or name.startswith(native_prefixes[2]) and not name.endswith(".zip")
+                ):
+                    continue
+                data = archive.read(name)
+                if not data.startswith(b"\x7fELF"):
+                    continue
+                temporary = os.path.join(ROOT, "dist", ".verify-elf")
+                with open(temporary, "wb") as handle:
+                    handle.write(data)
+                try:
+                    missing = [item for item in _elf_needed(temporary) if item not in native_names]
+                finally:
+                    os.unlink(temporary)
+                if missing:
+                    raise SystemExit("missing ELF dependencies for %s: %s" % (name, missing))
+            for item in manifest["files"]:
+                name = "%s/%s" % (package_root, item["path"])
+                if name not in names:
+                    raise SystemExit("manifest file missing from %s: %s" % (os.path.basename(path), name))
+                data = archive.read(name)
+                if len(data) != item["size"] or hashlib.sha256(data).hexdigest() != item["sha256"]:
+                    raise SystemExit("manifest mismatch in %s: %s" % (os.path.basename(path), name))
+        if len(names) != len(manifest["files"]) * len(PACKAGE_ROOTS):
             raise SystemExit("untracked package files in %s" % os.path.basename(path))
     print("verified %s (%d entries)" % (path, len(names)))
 
@@ -102,15 +149,11 @@ def main():
                 raise SystemExit("GitHub credential marker in release: %s" % item["path"])
 
     archives = glob.glob(os.path.join(ROOT, "dist", "*.zip"))
-    expected_names = {
-        "trimui-music-player-v%s-%s.zip" % (manifest["version"], platform)
-        for platform in PACKAGES
-    }
+    expected_names = {"trimui-music-player-v%s-universal.zip" % manifest["version"]}
     if {os.path.basename(path) for path in archives} != expected_names:
-        raise SystemExit("expected Stock OS and Spruce OS release ZIPs")
-    for platform, package_root in PACKAGES.items():
-        filename = "trimui-music-player-v%s-%s.zip" % (manifest["version"], platform)
-        verify_archive(os.path.join(ROOT, "dist", filename), package_root, manifest)
+        raise SystemExit("expected one universal Stock + Spruce release ZIP")
+    filename = next(iter(expected_names))
+    verify_archive(os.path.join(ROOT, "dist", filename), manifest)
     return 0
 
 

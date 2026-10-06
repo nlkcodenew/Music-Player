@@ -1,0 +1,9 @@
+#!/bin/sh
+RUNTIME=$(CDPATH= cd -- "$(dirname "$0")/.." 2>/dev/null && pwd)
+[ -n "$RUNTIME" ] || exit 126
+export PYTHONHOME="$RUNTIME"
+export PYTHONPATH="$RUNTIME/lib/python310.zip:$RUNTIME/lib/python3.10/lib-dynload"
+export LD_LIBRARY_PATH="$RUNTIME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$RUNTIME/lib/ld-linux-aarch64.so.1" \
+    --library-path "$LD_LIBRARY_PATH" \
+    "$RUNTIME/bin/python3.10" "$@"

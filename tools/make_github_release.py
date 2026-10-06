@@ -85,11 +85,8 @@ def main():
         print("FAIL: khong lay duoc github token tu credential manager")
         return 1
     dist = os.path.join(ROOT, "dist")
-    assets = [
-        (os.path.join(dist, "trimui-music-player-%s-%s.zip" % (tag, platform)),
-         "application/zip") for platform in ("stock", "spruce")
-    ]
-    assets.append((assets[0][0] + ".sha256", "text/plain"))
+    archive = os.path.join(dist, "trimui-music-player-%s-universal.zip" % tag)
+    assets = [(archive, "application/zip"), (archive + ".sha256", "text/plain")]
     assets.append((os.path.join(dist, "ota-manifest.json"), "application/json"))
     assets.append((os.path.join(ROOT, "manifest.json"), "application/json"))
     for fpath, _ in assets:

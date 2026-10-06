@@ -1,6 +1,13 @@
 # LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.20.2**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.20.3**.
+
+## v1.20.3 — Universal self-contained Python runtime
+
+- Một ZIP universal duy nhất cho Stock OS + Spruce OS, giải nén vào gốc SD.
+- Đóng kèm Python 3.10 ARM64, dynamic loader, glibc, OpenSSL, libffi, zlib và
+  toàn bộ native module cần thiết; không còn crash lúc mở vì firmware thiếu
+  Python 3.8+ hoặc thiếu thư viện runtime.
 
 ## v1.20.2 — Crash reporting sớm + ổn định Drive
 

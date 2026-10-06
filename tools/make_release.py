@@ -13,10 +13,8 @@ FILES_DIR = os.path.join(REPO_ROOT, "files")
 ASSETS_DIR = os.path.join(REPO_ROOT, "assets")
 DIST_DIR = os.path.join(REPO_ROOT, "dist")
 MANIFEST_PATH = os.path.join(REPO_ROOT, "manifest.json")
-PACKAGES = {
-    "stock": "Apps/MusicPlayer",
-    "spruce": "App/MusicPlayer",
-}
+PACKAGE_ROOTS = ("Apps/MusicPlayer", "App/MusicPlayer")
+ARCHIVE_NAME = "trimui-music-player-v%s-universal.zip"
 TEXT_EXTENSIONS = {".json", ".md", ".pem", ".py", ".sh", ".txt"}
 EXCLUDED = {
     "secrets.json", "settings.json", "collections.json", "pending-reports.json", "identity.json",
@@ -104,13 +102,20 @@ def manifest(version, repo, files):
     }
 
 
-def write_package(version, platform, package_root, files):
-    archive_name = "trimui-music-player-v%s-%s.zip" % (version, platform)
+def write_package(version, files):
+    archive_name = ARCHIVE_NAME % version
     archive_path = os.path.join(DIST_DIR, archive_name)
     with zipfile.ZipFile(archive_path, "w") as archive:
-        for relative, source in files:
-            target = "%s/%s" % (package_root, relative)
-            add_file(archive, source, target, relative.endswith(".sh"))
+        for package_root in PACKAGE_ROOTS:
+            for relative, source in files:
+                target = "%s/%s" % (package_root, relative)
+                add_file(
+                    archive, source, target,
+                    relative.endswith(".sh") or relative == "python/bin/python3"
+                    or relative == "python/bin/python3.10"
+                    or relative.startswith("python/lib/")
+                    and relative != "python/lib/python310.zip",
+                )
     digest = hashlib.sha256(release_bytes(archive_path)).hexdigest()
     with open(archive_path + ".sha256", "w", encoding="ascii", newline="\n") as handle:
         handle.write("%s  %s\n" % (digest, archive_name))
@@ -129,8 +134,7 @@ def main():
     shutil.rmtree(DIST_DIR, ignore_errors=True)
     os.makedirs(DIST_DIR, exist_ok=True)
     shutil.copyfile(MANIFEST_PATH, os.path.join(DIST_DIR, "ota-manifest.json"))
-    for platform, package_root in PACKAGES.items():
-        write_package(version, platform, package_root, files)
+    write_package(version, files)
     return 0
 
 
