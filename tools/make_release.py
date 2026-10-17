@@ -71,6 +71,7 @@ def payload_files():
         ("certs/cacert.pem", os.path.join(ASSETS_DIR, "cacert.pem")),
         ("config.json", os.path.join(ASSETS_DIR, "config.json")),
         ("icon.png", os.path.join(ASSETS_DIR, "icon.png")),
+        ("background.png", os.path.join(ASSETS_DIR, "background.png")),
         ("LICENSE.txt", os.path.join(REPO_ROOT, "LICENSE")),
     ))
     return files
@@ -88,7 +89,7 @@ def manifest(version, repo, files):
         }
         if relative == "certs/cacert.pem":
             entry["url"] = "https://raw.githubusercontent.com/%s/%s/assets/cacert.pem" % (repo, release_ref)
-        elif relative in ("config.json", "icon.png"):
+        elif relative in ("config.json", "icon.png", "background.png"):
             entry["url"] = "https://raw.githubusercontent.com/%s/%s/assets/%s" % (repo, release_ref, relative)
         elif relative == "LICENSE.txt":
             entry["url"] = "https://raw.githubusercontent.com/%s/%s/LICENSE" % (repo, release_ref)

@@ -1,6 +1,13 @@
 ﻿# LỊCH SỬ BẢN — Music Player
 
-> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.5**.
+> Tổng hợp từ commit/tag. Bản mới nhất: **v1.21.6**.
+
+## v1.21.6 — Thêm launcher background riêng
+
+- Thêm `background.png` (nền teal tối) + key `"background"` trong `config.json`:
+  khi di chuyển đến icon Music Player trong menu máy, launcher hiện nền riêng
+  thay vì nền mặc định (cơ chế giống Trimui-XiaoZhi).
+- `tools/make_release.py` đóng gói `background.png` vào ZIP và manifest OTA.
 
 ## v1.21.5 — Khởi động/thoát nhanh hơn + tự dọn log cũ
 

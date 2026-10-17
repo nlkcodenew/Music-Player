@@ -2,5 +2,6 @@
   "label": "Music Player",
   "icon": "icon.png",
   "iconsel": "icon.png",
-  "launch": "launch.sh"
+  "launch": "launch.sh",
+  "background": "background.png"
 }
