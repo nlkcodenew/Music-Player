@@ -49,6 +49,12 @@ if [ -d "$SDCARD_PATH/spruce" ]; then
     SPRUCE_SDL_PATH="$SDCARD_PATH/spruce/brick/sdl2"
     export PYSDL2_DLL_PATH="$SPRUCE_SDL_PATH:$SDCARD_PATH/App/PyUI/dll:$APP/libs"
     export LD_LIBRARY_PATH="$SPRUCE_SDL_PATH:$APP/libs:/usr/lib64:/usr/lib:/lib:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$LD_LIBRARY_PATH"
+elif [ -f /userdata/system/knulli.conf ]; then
+    # Knulli/Batocera: python bundle cua app mang glibc cu (<2.38) nen khong
+    # nap duoc SDL2 he thong (can GLIBC_2.38) -> SDL bundle roi ve offscreen
+    # (man hinh den). Dung python + SDL2 he thong cua Knulli.
+    export MUSIC_PLAYER_OS=knulli
+    export LD_LIBRARY_PATH="/usr/lib64:/usr/lib:/lib:$APP/libs:$LD_LIBRARY_PATH"
 else
     export MUSIC_PLAYER_OS=stock
     export LD_LIBRARY_PATH="$APP/libs:$SDCARD_PATH/System/lib:/usr/trimui/lib:$SDCARD_PATH/App/PyUI/dll-mali:$SDCARD_PATH/App/PyUI/dll:$SDCARD_PATH/spruce/flip/lib:/usr/lib64:/usr/lib:/lib:$LD_LIBRARY_PATH"
@@ -76,6 +82,13 @@ usable_python() {
 }
 
 find_python() {
+    if [ "$MUSIC_PLAYER_OS" = "knulli" ]; then
+        candidate="$(command -v python3 2>/dev/null)"
+        if usable_python "$candidate"; then
+            echo "$candidate"
+            return 0
+        fi
+    fi
     candidate="$APP/python/bin/python3"
     if [ -f "$candidate" ]; then
         [ -x "$candidate" ] || chmod +x "$candidate" 2>/dev/null

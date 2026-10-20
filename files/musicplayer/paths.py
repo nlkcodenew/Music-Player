@@ -36,6 +36,10 @@ def detect_os(sdcard_path, environ=None):
         return "spruce"
     if environ.get("IS_NEXT") == "yes":
         return "nextui"
+    if "knulli" in values or "batocera" in values:
+        return "knulli"
+    if os.path.exists("/userdata/system/knulli.conf"):
+        return "knulli"
     return "stock"
 
 
