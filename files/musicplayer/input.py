@@ -57,6 +57,9 @@ KEYBOARD_SCANCODES = {
 }
 
 VOLUME_SCANCODES = {128: "volume_up", 129: "volume_down"}
+# Knulli Brick Pro: VOL-/VOL+ chi xuat hien duoi dang nut joystick tho
+# 2/3 (khong qua keyboard/controller) — da do truc tiep tren may that.
+KNULLI_JOYSTICK_VOLUME = {2: "volume_down", 3: "volume_up"}
 
 STICK_DEADZONE = 8000
 STICK_INITIAL_DELAY = 0.35
@@ -130,6 +133,10 @@ class InputState:
                 self._stick(self._stick_direction(event.caxis.value))
         elif event_type in (SDL_JOYBUTTONDOWN, SDL_JOYBUTTONUP):
             if self.knulli_input:
+                # Bo qua moi nut joystick tho (ban sao lech chi so cua cac
+                # nut controller) — NGOAI TRU VOL-/VOL+ chi co o duong nay.
+                self._set(KNULLI_JOYSTICK_VOLUME.get(event.jbutton.button),
+                          event_type == SDL_JOYBUTTONDOWN)
                 return
             self._set(JOYSTICK_BUTTONS.get(event.jbutton.button), event_type == SDL_JOYBUTTONDOWN)
         elif event_type == SDL_JOYAXISMOTION:
