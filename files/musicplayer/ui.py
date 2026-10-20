@@ -124,7 +124,7 @@ class MusicPlayerApp:
         self.screen = "library"
         self.selection = 0
         self.scroll = 0
-        self.input = InputState()
+        self.input = InputState(ignore_joystick_buttons=(paths.os_name == "knulli"))
         self.player = None
         self.status = ""
         self.status_error = False

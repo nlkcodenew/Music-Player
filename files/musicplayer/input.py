@@ -62,7 +62,12 @@ STICK_REPEAT_INTERVAL = 0.20
 
 
 class InputState:
-    def __init__(self, clock=None):
+    def __init__(self, clock=None, ignore_joystick_buttons=False):
+        # Knulli: tay cam tich hop vua la keyboard (scancode dung) vua la
+        # joystick voi chi so nut lech — VOL+/VOL- thanh nut 3/2 ("x"/"y"),
+        # nut mat bi nhan doi kem hanh dong rac (X kem "r1"...). Bo qua
+        # duong nut joystick tren Knulli; hat/axis (stick) van giu.
+        self.ignore_joystick_buttons = ignore_joystick_buttons
         self.clock = clock or time.monotonic
         self.held = set()
         self.edges = []
@@ -117,6 +122,8 @@ class InputState:
             elif event.caxis.axis == 1:
                 self._stick(self._stick_direction(event.caxis.value))
         elif event_type in (SDL_JOYBUTTONDOWN, SDL_JOYBUTTONUP):
+            if self.ignore_joystick_buttons:
+                return
             self._set(JOYSTICK_BUTTONS.get(event.jbutton.button), event_type == SDL_JOYBUTTONDOWN)
         elif event_type == SDL_JOYAXISMOTION:
             if event.jaxis.axis == 1:
