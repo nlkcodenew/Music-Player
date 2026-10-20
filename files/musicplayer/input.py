@@ -56,18 +56,22 @@ KEYBOARD_SCANCODES = {
     81: "stick_down",
 }
 
+VOLUME_SCANCODES = {128: "volume_up", 129: "volume_down"}
+
 STICK_DEADZONE = 8000
 STICK_INITIAL_DELAY = 0.35
 STICK_REPEAT_INTERVAL = 0.20
 
 
 class InputState:
-    def __init__(self, clock=None, ignore_joystick_buttons=False):
+    def __init__(self, clock=None, knulli_input=False):
         # Knulli: tay cam tich hop vua la keyboard (scancode dung) vua la
         # joystick voi chi so nut lech — VOL+/VOL- thanh nut 3/2 ("x"/"y"),
         # nut mat bi nhan doi kem hanh dong rac (X kem "r1"...). Bo qua
         # duong nut joystick tren Knulli; hat/axis (stick) van giu.
-        self.ignore_joystick_buttons = ignore_joystick_buttons
+        # Phim volume tren Knulli chi la scancode keyboard (128/129) —
+        # he thong tu doi am luong; map thanh action de app hien HUD.
+        self.knulli_input = knulli_input
         self.clock = clock or time.monotonic
         self.held = set()
         self.edges = []
@@ -111,7 +115,10 @@ class InputState:
         if event_type in (SDL_KEYDOWN, SDL_KEYUP):
             if event.key.repeat:
                 return
-            self._set(KEYBOARD_SCANCODES.get(event.key.keysym.scancode), event_type == SDL_KEYDOWN)
+            action = KEYBOARD_SCANCODES.get(event.key.keysym.scancode)
+            if action is None and self.knulli_input:
+                action = VOLUME_SCANCODES.get(event.key.keysym.scancode)
+            self._set(action, event_type == SDL_KEYDOWN)
         elif event_type in (SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLERBUTTONUP):
             self._set(CONTROLLER_BUTTONS.get(event.cbutton.button), event_type == SDL_CONTROLLERBUTTONDOWN)
         elif event_type == SDL_CONTROLLERAXISMOTION:
@@ -122,7 +129,7 @@ class InputState:
             elif event.caxis.axis == 1:
                 self._stick(self._stick_direction(event.caxis.value))
         elif event_type in (SDL_JOYBUTTONDOWN, SDL_JOYBUTTONUP):
-            if self.ignore_joystick_buttons:
+            if self.knulli_input:
                 return
             self._set(JOYSTICK_BUTTONS.get(event.jbutton.button), event_type == SDL_JOYBUTTONDOWN)
         elif event_type == SDL_JOYAXISMOTION:

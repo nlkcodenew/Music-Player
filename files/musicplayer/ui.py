@@ -124,7 +124,7 @@ class MusicPlayerApp:
         self.screen = "library"
         self.selection = 0
         self.scroll = 0
-        self.input = InputState(ignore_joystick_buttons=(paths.os_name == "knulli"))
+        self.input = InputState(knulli_input=(paths.os_name == "knulli"))
         self.player = None
         self.status = ""
         self.status_error = False
@@ -160,6 +160,10 @@ class MusicPlayerApp:
         # Tai Drive: job dang chay (de ve %) + dong "da luu" gan header.
         self.download_job = None
         self._saved_toast = ("", 0.0)
+        self._volume_hud = None
+        self._volume_level = None
+        self._volume_read_due = 0.0
+        self._volume_last_read = 0.0
         self._jobs_pruned_at = time.monotonic()
         # Hop xac nhan chung (xoa Drive, tai ca thu muc, xoa playlist):
         # {"title":..., "lines":[...], "on_confirm":callable}.
@@ -493,6 +497,9 @@ class MusicPlayerApp:
     def _handle(self, action):
         get_logger().info("input action=%s screen=%s", action, self.screen)
         if self.update_busy:
+            return
+        if action in ("volume_up", "volume_down"):
+            self._show_volume_hud(action)
             return
         if getattr(self, "pending_confirm", None):
             if action == "a":
@@ -2609,6 +2616,7 @@ class MusicPlayerApp:
             self._render_playing()
         self._render_footer()
         self._render_saved_toast()
+        self._render_volume_hud()
         self._render_download_progress()
         if getattr(self, "pending_confirm", None):
             self._render_pending_confirm()
@@ -2630,6 +2638,65 @@ class MusicPlayerApp:
             return 0
         label = self.ellipsize(str(toast[0]), self.width - 160, "small")
         return self.measure("SAVED  %s" % label, "small")[0] + 28 + 24 + 8
+
+    def _show_volume_hud(self, action):
+        # Am luong do HE THONG Knulli quan ly (phim cung) — app khong doi
+        # Mix_VolumeMusic (tranh nhay 2 nac), chi hien thanh thong bao.
+        now = time.monotonic()
+        step = 5 if action == "volume_up" else -5
+        if self._volume_level is None:
+            try:
+                self._volume_level = int(self.player.settings.get("volume"))
+            except Exception:
+                self._volume_level = 50
+        self._volume_level = max(0, min(100, self._volume_level + step))
+        self._volume_hud = now
+        # Doc muc that tu wpctl sau khi he thong ap dung (tre ~180ms),
+        # toi da 4 lan/giay khi giu phim.
+        self._volume_read_due = now + 0.18
+
+    def _system_volume_percent(self):
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                capture_output=True, text=True, timeout=1,
+            ).stdout or ""
+            # "Volume: 0.25" (co the kem "[MUTED]")
+            value = float(out.split(":", 1)[1].split()[0])
+            return max(0, min(100, round(value * 100)))
+        except Exception:
+            return None
+
+    def _render_volume_hud(self):
+        hud = getattr(self, "_volume_hud", None)
+        if hud is None:
+            return
+        now = time.monotonic()
+        if now - hud > 1.6:
+            self._volume_hud = None
+            return
+        if self._volume_read_due and now >= self._volume_read_due \
+                and now - self._volume_last_read > 0.25:
+            self._volume_last_read = now
+            self._volume_read_due = 0.0
+            real = self._system_volume_percent()
+            if real is not None:
+                self._volume_level = real
+        level = self._volume_level if self._volume_level is not None else 0
+        w = 360
+        x = max(8, (self.width - w) // 2)
+        y, h = 72, 30
+        self.fill(x, y, w, h, self.PANEL)
+        self.fill(x, y, 3, h, self.ACCENT)
+        self.text("VOLUME", x + 14, y + 6, "small", self.MUTED)
+        bar_x, bar_y, bar_w, bar_h = x + 92, y + 11, w - 92 - 58, 8
+        self.fill(bar_x, bar_y, bar_w, bar_h, self.BG)
+        filled = round(bar_w * level / 100.0)
+        if filled > 0:
+            self.fill(bar_x, bar_y, filled, bar_h, self.ACCENT)
+        pct = "%d%%" % level
+        self.text(pct, x + w - 14 - self.measure(pct, "small")[0], y + 6, "small", self.TEXT)
 
     def _render_saved_toast(self):
         """Dong 'SAVED <ten bai>' ngay duoi tieu de (chi ten, khong duong dan)."""
