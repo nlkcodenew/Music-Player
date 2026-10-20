@@ -280,4 +280,8 @@ def font_candidates(paths):
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
     ]
     candidates.extend(glob.glob("/usr/trimui/res/*.ttf"))
+    # Knulli/Batocera: DejaVu nam o /usr/share/fonts/dejavu (khong co truetype/)
+    candidates.append("/usr/share/fonts/dejavu/DejaVuSans.ttf")
+    # Du phong: bat ky font TTF nao trong /usr/share/fonts
+    candidates.extend(sorted(glob.glob("/usr/share/fonts/**/*.ttf", recursive=True)))
     return [candidate for candidate in candidates if os.path.isfile(candidate)]
