@@ -66,6 +66,43 @@ else
         export LD_PRELOAD="/usr/lib/libasound.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
     fi
 fi
+# --- Knulli: chan nac SUSPEND cua idlewatcher khi app dang mo/phat ---
+# Giong co che /tmp/stay_alive cua stock: idlewatcher Knulli tat man sau
+# `timer` giay (giu nguyen — tiet kiem pin) nhung SUSPEND ca may sau
+# `extendedtimer` giay khong bam phim -> nghe nhac lau bi cat. Tam day
+# extendedtimer len rat lon; khoi phuc trong cleanup_launcher tru khi
+# app chuyen sang phat nen (KEEP_STAY_ALIVE=1, nhac con dang chay).
+KNULLI_IDLE_SAVED="$APP/data/.knulli-idle-saved"
+knulli_idle_restore() {
+    [ -f "$KNULLI_IDLE_SAVED" ] || return 0
+    OLD_EXT="$(cat "$KNULLI_IDLE_SAVED" 2>/dev/null)"
+    rm -f "$KNULLI_IDLE_SAVED"
+    case "$OLD_EXT" in *[!0-9]*|"") return 0;; esac
+    knulli-settings-set system.idlewatcher.extendedtimer "$OLD_EXT" 2>/dev/null
+    if [ -f /etc/idlewatcher/idlewatcher.conf ]; then
+        sed -i "s/^extended=.*/extended=$OLD_EXT/" /etc/idlewatcher/idlewatcher.conf 2>/dev/null
+    fi
+    /etc/init.d/S96idlewatcher-daemon restart >/dev/null 2>&1 || true
+}
+if [ "$MUSIC_PLAYER_OS" = "knulli" ] && command -v knulli-settings-get >/dev/null 2>&1; then
+    knulli_idle_restore  # tu chua neu lan truoc app/launcher chet dot tu
+    CUR_EXT="$(knulli-settings-get system.idlewatcher.extendedtimer 2>/dev/null)"
+    case "$CUR_EXT" in
+        *[!0-9]*|"") : ;;
+        *)
+            if [ "$CUR_EXT" -lt 86400 ]; then
+                mkdir -p "$APP/data" 2>/dev/null
+                echo "$CUR_EXT" > "$KNULLI_IDLE_SAVED"
+                knulli-settings-set system.idlewatcher.extendedtimer 86400 2>/dev/null
+                if [ -f /etc/idlewatcher/idlewatcher.conf ]; then
+                    sed -i "s/^extended=.*/extended=86400/" /etc/idlewatcher/idlewatcher.conf 2>/dev/null
+                fi
+                /etc/init.d/S96idlewatcher-daemon restart >/dev/null 2>&1 || true
+            fi
+            ;;
+    esac
+fi
+
 {
     echo "os=$MUSIC_PLAYER_OS"
     echo "platform=${PLATFORM:-unknown}"
@@ -193,6 +230,7 @@ restore_display() {
 cleanup_launcher() {
     restore_display
     [ "$KEEP_STAY_ALIVE" -eq 1 ] || rm -f /tmp/stay_alive 2>/dev/null
+    [ "$KEEP_STAY_ALIVE" -eq 1 ] || knulli_idle_restore 2>/dev/null || true
 }
 
 trap cleanup_launcher EXIT
